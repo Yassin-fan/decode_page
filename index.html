@@ -36,10 +36,10 @@ var pako=function(){function t(t){let e=t[0],i=t[1],s=t[2],n=t[3];e=((e&1)<<7|(e
 
 <script>
 /* =========================================================
-   NEW GEN ALGORITHM: Cyan Box + Bilinear Homography Tracking
+   GEN 3: CRC32 VALIDATION + Bilinear Homography Tracking
    ========================================================= */
-const C = 33, PAD = 2, TOTAL_C = C + PAD * 2, CAP = 130;
-let totalF = null, rx = {}, lastCap = {}, stream = null, live = false, rid = null;
+const C = 33, PAD = 2, TOTAL_C = C + PAD * 2;
+let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
 const E = id => document.getElementById(id);
@@ -67,31 +67,21 @@ async function startCam(deviceId){
   try {
     stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream; await video.play();
-    status.textContent = 'Scanning... (Keep Phone Upright)';
+    status.textContent = 'Scanning... (CRC Engine ON)';
     live = true; requestAnimationFrame(loop);
   } catch(e) { status.textContent = 'Camera err: ' + e.message; }
 }
 
 camSel.onchange = function() { curDev = camSel.value; startCam(curDev); };
 
-// 双线性插值：数学透视纠正
-function interpolate(tl, tr, bl, br, u, v) {
-    let tx = tl.x + u * (tr.x - tl.x), ty = tl.y + u * (tr.y - tl.y);
-    let bx = bl.x + u * (br.x - bl.x), by = bl.y + u * (br.y - bl.y);
-    return { x: tx + v * (bx - tx), y: ty + v * (by - ty) };
-}
-
 function processFrame(pixels, w, h) {
     let minSum = 1e9, maxSum = -1e9, minDiff = 1e9, maxDiff = -1e9;
     let tl = null, tr = null, bl = null, br = null, cyan = 0;
 
-    // 1. 寻找刺眼的青色边框，通过极限坐标定位绝对 4 角
     for(let y=0; y<h; y+=2) {
         for(let x=0; x<w; x+=2) {
             let i = (y * w + x) * 4;
-            let r = pixels[i], g = pixels[i+1], b = pixels[i+2];
-            // 判断是否是青色 (Cyan)
-            if (r < 100 && g > 130 && b > 130) {
+            if (pixels[i] < 100 && pixels[i+1] > 130 && pixels[i+2] > 130) {
                 cyan++;
                 let sum = x + y, diff = x - y;
                 if(sum < minSum) { minSum = sum; tl = {x, y}; }
@@ -104,22 +94,19 @@ function processFrame(pixels, w, h) {
 
     if (cyan < 50 || !tl || !tr || !bl || !br) return null;
     let dx = tr.x - tl.x, dy = tr.y - tl.y;
-    if (Math.sqrt(dx*dx + dy*dy) < 50) return null; // 太小了不要
+    if (Math.sqrt(dx*dx + dy*dy) < 50) return null;
 
-    // 在屏幕上画出捕捉到的绿色纠正框
     octx.strokeStyle = '#0f0'; octx.lineWidth = 4; octx.beginPath();
     octx.moveTo(tl.x, tl.y); octx.lineTo(tr.x, tr.y);
     octx.lineTo(br.x, br.y); octx.lineTo(bl.x, bl.y);
     octx.closePath(); octx.stroke();
 
-    // 2. 利用透视纠正，在四个角内部精准提取 33x33 网格
     let bits = [];
     for(let row=0; row<C; row++) {
         for(let col=0; col<C; col++) {
             let u = (col + PAD + 0.5) / TOTAL_C;
             let v = (row + PAD + 0.5) / TOTAL_C;
             
-            // 计算纠正后的绝对坐标
             let tx = tl.x + u*(tr.x - tl.x), ty = tl.y + u*(tr.y - tl.y);
             let bx = bl.x + u*(br.x - bl.x), by = bl.y + u*(br.y - bl.y);
             let px = Math.round(tx + v*(bx - tx)), py = Math.round(ty + v*(by - ty));
@@ -127,25 +114,43 @@ function processFrame(pixels, w, h) {
             if (px >= 0 && px < w && py >= 0 && py < h) {
                 let i = (py * w + px) * 4;
                 let gray = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
-                bits.push(gray > 128 ? 1 : 0); // 直接通过明暗判断 0 或 1
+                bits.push(gray > 128 ? 1 : 0);
             } else {
                 bits.push(0);
             }
         }
     }
 
-    // 3. 把 bit 压成 bytes
-    let bytes = new Uint8Array(4 + CAP);
-    for(let i=0; i<bytes.length; i++) {
+    // 136 bytes = 1088 bits
+    let bytes = new Uint8Array(136);
+    for(let i=0; i<136; i++) {
         let b = 0;
         for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let idx = (bytes[0]<<8) | bytes[1];
-    let total = (bytes[2]<<8) | bytes[3];
+    // 提取帧数据 (132 bytes) 和 期望 CRC (4 bytes)
+    let frame_data = bytes.slice(0, 132);
+    let expected_crc = ((bytes[132]<<24) | (bytes[133]<<16) | (bytes[134]<<8) | bytes[135]) >>> 0;
+    
+    // JS 实时计算 CRC32
+    let calc_crc = 0xFFFFFFFF;
+    for(let i=0; i<frame_data.length; i++) {
+        calc_crc ^= frame_data[i];
+        for(let j=0; j<8; j++) {
+            calc_crc = (calc_crc & 1) ? (0xEDB88320 ^ (calc_crc >>> 1)) : (calc_crc >>> 1);
+        }
+    }
+    calc_crc = (calc_crc ^ 0xFFFFFFFF) >>> 0;
+
+    // 数学神盾拦截：如果不等，直接抛弃此帧！
+    if (calc_crc !== expected_crc) return null; 
+
+    let idx = (frame_data[0]<<8) | frame_data[1];
+    let total = (frame_data[2]<<8) | frame_data[3];
     if (idx >= total || total < 1 || total > 9999) return null;
-    return { index: idx, total, payload: bytes.slice(4) };
+    
+    return { index: idx, total, payload: frame_data.slice(4) };
 }
 
 function reassemble(){
@@ -161,7 +166,7 @@ function reassemble(){
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
   try { raw = pako.inflate(merged.slice(4+nameLen)); }
-  catch(e) { status.textContent='Decompress err'; return null; }
+  catch(e) { status.textContent='Decompress err: '+e.message; return null; }
   return { filename: fname, data: raw };
 }
 
@@ -172,12 +177,9 @@ function dlFile(file){
   a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-let lastScan = 0;
-function loop(ts){
+function loop(){
   if(!live) return;
   rid = requestAnimationFrame(loop);
-  if(ts - lastScan < 120) return;
-  lastScan = ts;
 
   let vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
@@ -191,16 +193,16 @@ function loop(ts){
   let {index, total, payload} = result;
   if(totalF===null) { totalF = total; } else if(totalF!==total) return;
 
-  let now = Date.now();
-  if(lastCap[index] && now - lastCap[index] < 400) return;
-  lastCap[index] = now; rx[index] = payload;
+  if(!rx[index]) {
+      rx[index] = payload;
+      let got = Object.keys(rx).length, pct = Math.round(got/totalF*100);
+      bar.style.width = pct+'%'; framesE.textContent = got+'/'+totalF;
+  }
+  
+  status.textContent = 'Frame '+(index+1)+' of '+totalF + ' (Valid!)';
 
-  let got = Object.keys(rx).length, pct = Math.round(got/totalF*100);
-  bar.style.width = pct+'%'; framesE.textContent = got+'/'+totalF;
-  status.textContent = 'Frame '+(index+1)+' of '+totalF;
-
-  if(got >= totalF){
-    status.textContent = 'Success! Decoded.';
+  if(Object.keys(rx).length >= totalF){
+    status.textContent = 'Success! CRC Passed.';
     live = false; cancelAnimationFrame(rid);
     if(stream) stream.getTracks().forEach(t => t.stop());
     let file = reassemble();
