@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — V3.1 (Stable HD)</title>
+<title>Optical Rx — V7 (49x49 Golden)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -33,8 +33,8 @@ button:disabled{background:#333;color:#666}
 </div>
 
 <script>
-// 回滚至 65x65
-const C = 65, PAD = 2, TOTAL_C = C + PAD * 2;
+// ================= V7 黄金比例 (49x49) =================
+const C = 49, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
@@ -69,10 +69,11 @@ async function enumCams(){
 async function startCam(deviceId){
   if(stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   
+  // 核心优化1：放弃卡顿的 1080P，回归 720P，确保 JS 处理能够满血 60 帧运行！
   let videoConstraints = {
     facingMode: 'environment',
-    width: { ideal: 1920, min: 1280 },
-    height: { ideal: 1080, min: 720 },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
     advanced: [{ focusMode: "continuous" }]
   };
   if(deviceId) videoConstraints.deviceId = { exact: deviceId };
@@ -80,7 +81,7 @@ async function startCam(deviceId){
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
     video.srcObject = stream; await video.play();
-    status.textContent = '扫描中... (V3.1 经典高清)';
+    status.textContent = '扫描中... (V7 满血流畅版)';
     status.style.color = '#0f0';
     live = true; requestAnimationFrame(loop);
   } catch(e) {
@@ -106,8 +107,9 @@ function processFrame(pixels, w, h) {
     let minSum = 1e9, maxSum = -1e9, minDiff = 1e9, maxDiff = -1e9;
     let tl = null, tr = null, bl = null, br = null, cyan = 0;
 
-    for(let y=0; y<h; y+=2) {
-        for(let x=0; x<w; x+=2) {
+    // 核心优化2：寻找边框的步长增加到 4，CPU 运算量直接锐减 4 倍，彻底告别画面延迟！
+    for(let y=0; y<h; y+=4) {
+        for(let x=0; x<w; x+=4) {
             let i = (y * w + x) * 4;
             if (pixels[i] < 100 && pixels[i+1] > 130 && pixels[i+2] > 130) {
                 cyan++;
@@ -120,7 +122,7 @@ function processFrame(pixels, w, h) {
         }
     }
 
-    if (cyan < 50 || !tl || !tr || !bl || !br) return null;
+    if (cyan < 15 || !tl || !tr || !bl || !br) return null;
     let dx = tr.x - tl.x, dy = tr.y - tl.y;
     if (Math.sqrt(dx*dx + dy*dy) < 50) return null;
 
@@ -129,7 +131,7 @@ function processFrame(pixels, w, h) {
     octx.lineTo(br.x, br.y); octx.lineTo(bl.x, bl.y);
     octx.closePath(); octx.stroke();
 
-    let bits = [];
+    let rawGrays = [];
     for(let row=0; row<C; row++) {
         for(let col=0; col<C; col++) {
             let u = (col + PAD + 0.5) / TOTAL_C;
@@ -140,24 +142,39 @@ function processFrame(pixels, w, h) {
             
             if (px >= 0 && px < w && py >= 0 && py < h) {
                 let i = (py * w + px) * 4;
-                // 回滚到极简稳定的亮度判断
-                let gray = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
-                bits.push(gray > 128 ? 1 : 0);
+                rawGrays.push((pixels[i] + pixels[i+1] + pixels[i+2]) / 3);
             } else {
-                bits.push(0);
+                rawGrays.push(-1);
             }
         }
     }
 
-    let bytes = new Uint8Array(528);
-    for(let i=0; i<528; i++) {
+    // 核心优化3：自适应亮度，无惧屏幕过暗或反光
+    let minG = 255, maxG = 0;
+    for(let g of rawGrays) {
+        if(g !== -1) {
+            if(g < minG) minG = g;
+            if(g > maxG) maxG = g;
+        }
+    }
+    let threshold = (maxG - minG > 30) ? (minG + maxG) / 2 : 128;
+
+    let bits = [];
+    for(let g of rawGrays) {
+        if (g === -1) bits.push(0);
+        else bits.push(g > threshold ? 1 : 0);
+    }
+
+    // ================= 容量匹配：300 字节 =================
+    let bytes = new Uint8Array(300);
+    for(let i=0; i<300; i++) {
         let b = 0;
         for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let frame_data = bytes.slice(0, 524);
-    let expected_crc = ((bytes[524]<<24) | (bytes[525]<<16) | (bytes[526]<<8) | bytes[527]) >>> 0;
+    let frame_data = bytes.slice(0, 296);
+    let expected_crc = ((bytes[296]<<24) | (bytes[297]<<16) | (bytes[298]<<8) | bytes[299]) >>> 0;
     
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
@@ -197,7 +214,8 @@ function reassemble(){
   let merged=new Uint8Array(tLen), off=0;
   for(let p of parts){ merged.set(p, off); off+=p.length; }
   
-  if(merged[0]!==0xAB || merged[1]!==0x03) { status.textContent='校验头损坏 (请确保电脑运行的是 V3 协议)'; return null; }
+  // 校验魔数 0xAB 0x07
+  if(merged[0]!==0xAB || merged[1]!==0x07) { status.textContent='校验头损坏 (请确保电脑运行的是 V7 代码)'; return null; }
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
