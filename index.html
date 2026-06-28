@@ -3,18 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — Pro Decoder</title>
+<title>Optical Rx — Pro Decoder (CRC32)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;color:#eee;font-family:system-ui,sans-serif;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 #cam,#overlay{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}
-#hud{position:absolute;bottom:0;left:0;right:0;padding:16px;background:linear-gradient(transparent,rgba(0,0,0,.9));z-index:10}
-#status{font-size:15px;font-weight:bold;margin-bottom:6px;color:#0f0}
-#bar-wrap{height:8px;background:#333;border-radius:4px;overflow:hidden;margin-bottom:4px}
+#hud{position:absolute;bottom:0;left:0;right:0;padding:16px;background:linear-gradient(transparent,rgba(0,0,0,.9));z-index:10;display:flex;flex-direction:column;gap:8px}
+#status{font-size:16px;font-weight:bold;color:#0f0}
+#bar-wrap{height:10px;background:#333;border-radius:5px;overflow:hidden}
 #bar{height:100%;background:#0f0;width:0;transition:width .2s}
-#info{display:flex;justify-content:space-between;font-size:13px;opacity:.8}
-select{display:block;margin:10px auto;padding:6px;background:#222;color:#fff;border:1px solid #555;border-radius:4px}
-button{display:block;margin:0 auto;padding:12px 32px;font-size:16px;border:none;border-radius:8px;background:#0a0;color:#000;cursor:pointer;font-weight:bold}
+#info{display:flex;justify-content:space-between;font-size:14px;font-weight:bold}
+#missing{color:#ff4444;font-size:14px;font-weight:bold;min-height:20px;word-break:break-all}
+select{padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;width:100%}
+button{padding:14px;font-size:18px;border:none;border-radius:8px;background:#0a0;color:#000;cursor:pointer;font-weight:bold;width:100%}
 button:disabled{background:#333;color:#666}
 </style>
 </head>
@@ -24,28 +26,21 @@ button:disabled{background:#333;color:#666}
 <div id="hud">
   <div id="status">Starting camera…</div>
   <div id="bar-wrap"><div id="bar"></div></div>
-  <div id="info"><span id="frames">0/0</span><span id="sz"></span></div>
+  <div id="info"><span id="frames">0 / 0</span></div>
+  <div id="missing"></div> 
   <select id="camSel"></select>
   <button id="dl" disabled>Download File</button>
 </div>
 
 <script>
-/*! pako 2.1.0 (Minified inline) */
-var pako=function(){function t(t){let e=t[0],i=t[1],s=t[2],n=t[3];e=((e&1)<<7|(e&2)<<5|(e&4)<<3|(e&8)<<1|(e&16)>>1|(e&32)>>3|(e&64)>>5|(e&128)>>7)>>>0,i=((i&1)<<7|(i&2)<<5|(i&4)<<3|(i&8)<<1|(i&16)>>1|(i&32)>>3|(i&64)>>5|(i&128)>>7)>>>0,s=((s&1)<<7|(s&2)<<5|(s&4)<<3|(s&8)<<1|(s&16)>>1|(s&32)>>3|(s&64)>>5|(s&128)>>7)>>>0,n=((n&1)<<7|(n&2)<<5|(n&4)<<3|(n&8)<<1|(n&16)>>1|(n&32)>>3|(n&64)>>5|(n&128)>>7)>>>0;return[e>>>24&255,e>>>16&255,e>>>8&255,255&e,i>>>24&255,i>>>16&255,i>>>8&255,255&i,s>>>24&255,s>>>16&255,s>>>8&255,255&s,n>>>24&255,n>>>16&255,n>>>8&255,255&n]}function e(e,i,s,n,r,a){return e[r]<<24|e[r+1]<<16|e[r+2]<<8|e[r+3]}var i=Object.assign||function(t){for(var e=1;e<arguments.length;e++){var i=arguments[e];for(var s in i)Object.prototype.hasOwnProperty.call(i,s)&&(t[s]=i[s])}return t};function s(t,e){this.msg=t,this.input=e}var n={Z_OK:0,Z_STREAM_END:1,Z_NEED_DICT:2,Z_ERRNO:-1,Z_STREAM_ERROR:-2,Z_DATA_ERROR:-3,Z_BUF_ERROR:-5},r=function(){for(var t,e=[],i=0;i<256;i++){t=i;for(var s=0;s<8;s++)t=1&t?3988292384^t>>>1:t>>>1;e[i]=t}return e}();var a=function(){function t(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offset=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distbits=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens=new r.Buf16(320),this.work=new r.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was=0}return t.prototype.inflateReset=function(t){return t&&(t.mode=0),null},t.prototype.inflateReset2=function(t,e){return t&&e<0||e>16?(s.msg="windowBits",2):(t.mode=0,t.wrap=(e>>4)+1,t.wbits=e,null)},t.prototype.inflateInit2=function(e,i){if(!e)return 2;var s=new t;return e.state=s,s.window=null,s.mode=0,e.inflateReset2(s,i)},t}();var o=function(){function t(t,e,i,s,n){this.strm=t,this.mode=e,this.fn=i,this.fn2=s,this.fn3=r}return t}(),h=function(){function t(t){this.buf=t,this.next=0,this.len=this.buf.length}return t.prototype.reset=function(t){this.buf=t,this.next=0,this.len=this.buf.length},t.prototype.read=function(t){if(this.len===this.next)return-1;var e=this.buf[this.next];return this.next++,e&255},t}(),l=function(){function t(t,e){this.buf=t,this.pos=e,this.pos+=4}return t.prototype.read=function(){return e(this.buf,this.pos>>>3)}.bind(t)}(),c=function(){function t(t,e,i,s,n){this.min=t,this.max=e,this.code=i,this.code2=s,this.tab=n}return t}();var u=function(){function t(t,e){this.b=t,this.c=e}return t}(),f=[new c(0,0,0,0,0)];var d=function(){function t(){this.order=new r.Buf16(19)}return t}();function p(t){for(;null!==t;){var e=t;t=t.next}}var g=function(){function t(t){this.strm=t,this.status=0,this.pending_buf=null,this.pending_buf_size=0,this.pending_out=0,this.pending=0,this.wrap=0,this.gzhead=null,this.gzindex=0,this.method=8,this.last_flush=-1,this.w_size=0,this.w_bits=0,this.w_mask=0,this.window=null,this.window_size=0,this.prev=null,this.head=null,this.ins_h=0,this.hash_size=0,this.hash_bits=0,this.hash_mask=0,this.hash_shift=0,this.block_start=0,this.match_length=0,this.prev_match=0,this.match_available=0,this.strstart=0,this.match_start=0,this.lookahead=0,this.prev_length=0,this.max_chain_length=0,this.max_lazy_match=0,this.level=0,this.strategy=0,this.good_match=0,this.nice_match=0,this.dyn_ltree=new r.Buf16(1146),this.dyn_dtree=new r.Buf16(244),this.bl_tree=new r.Buf16(78),this.bl_count=new r.Buf16(16),this.heap=new r.Buf16(573),this.heap_len=0,this.heap_max=0,this.depth=new r.Buf16(573),this.l_desc=null,this.d_desc=null,this.bl_desc=null,this.opt_len=0,this.static_len=0,this.matches=0,this.insert=0,this.bi_buf=0,this.bi_valid=0}return t}();var _="unexpected end of file",m="invalid stored block lengths",b="invalid distance too far back",y="invalid code lengths set",w="invalid bit length repeat",v="invalid literal/lengths set",k="too many length or distance symbols",z="invalid block type",x="invalid distances set",A="invalid code -- missing end-of-block",E="invalid distances set";function B(t,e){return t>>>e|t<<32-e}var C=function(){function t(t,e,i,s,n,r,a,o,h,l,c,u,f,d,p){this.Bn=t,this.Bs=e,this.Bc=i,this.tree=s,this.count=n,this.min_count=r,this.max_code=a,this.static_tree=o,this.extra_bits=h,this.extra_base=l,this.elems=c,this.max_length=u,this.has_stree=f,this.next=d,this.prev=p}return t}();var D=[new C(0,0,0,f,0,0,0,null,0,0,0,0,0,0,0)];function F(t){return t<256?tn[t]:tn[256+(t>>>7)]}function G(t,e){t.pending_buf[t.pending++]=255&e,t.pending_buf[t.pending++]=e>>>8&255}function H(t,e,i){t.bi_valid>16-i?(t.bi_buf|=e<<t.bi_valid&65535,G(t,t.bi_buf),t.bi_buf=e>>16-t.bi_valid,t.bi_valid+=i-16):(t.bi_buf|=e<<t.bi_valid&65535,t.bi_valid+=i)}function I(t,e,i){H(t,i[2*e],i[2*e+1])}function J(t,e){var i=0;do{i|=1&t,t>>>=1,i<<=1}while(--e>0);return i>>>1}function K(t,e,i){var s,n,r=new Array(16),a=0;for(s=1;s<=15;s++)r[s]=a=a+i[s-1]<<1;for(n=0;n<=e;n++){var o=t[2*n+1];0!==o&&(t[2*n]=J(r[o]++,o))}}function L(t){var e;for(e=0;e<286;e++)t.dyn_ltree[2*e]=0;for(e=0;e<30;e++)t.dyn_dtree[2*e]=0;for(e=0;e<19;e++)t.bl_tree[2*e]=0;t.dyn_ltree[512]=1,t.opt_len=t.static_len=0,t.matches=t.insert=0}function M(t){t.bi_valid>8?G(t,t.bi_buf):t.bi_valid>0&&(t.pending_buf[t.pending++]=t.bi_buf),t.bi_buf=0,t.bi_valid=0}function N(t,e,i,s){var n=2*e,r=2*i;return t[n]<t[r]||t[n]===t[r]&&s[e]<=s[i]}function O(t,e,i){for(var s=t.heap[i],n=i<<1;n<=t.heap_len&&(n<t.heap_len&&N(e,t.heap[n+1],t.heap[n],t.depth)&&n++,!N(e,s,t.heap[n],t.depth));)t.heap[i]=t.heap[n],i=n,n<<=1;t.heap[i]=s}function P(t,e,i){var s,n,r,a,o=0;if(0!==t.matches){do{s=J(e,o)-1&65535;var h=t.dyn_ltree;n=2*(32768&s?t.dyn_ltree[1024+(32767&s)]:t.dyn_ltree[2*(32767&s)]);var l=t.dyn_ltree;r=2*(256+(s>>>15));var c=t.dyn_ltree;65535&s?(a=s>>>16&15)<3?(H(t,n[0],n[1]+1),H(t,r[0],r[1]),H(t,0,a)):H(t,n[0],n[1]),a<3||(a-=3,H(t,r[0],r[1]),H(t,a>>>8&3,a>>>10&255),H(t,0,a>>>2&7))):a=s>>>16,H(t,c[2*(256+a)][0],c[2*(256+a)][1]+1)}while(0!==(65535&s));return L(t),!0}return!1}function Q(t,e){I(t,e[2*1448],e[2*1449])}function R(t,e){I(t,e[2*1450],e[2*1451])}function S(t,e){I(t,e[2*1452],e[2*1453])}function T(t){for(var e=0;e<t.pending;){t.pending_buf[t.pending_out++]=t.pending_buf[e++],t.pending_out===t.pending_buf_size&&(t.pending_out=0)}t.pending=0}function U(t,e){var i,s,n=0;do{s=195*((n>>>8&255)+3)+((n>>>16&255)<<4)+((n>>>24&255)<<8),i=e.read(s)}while(0===i);for(var r=1;(n&255)!==i&&r<256;)i=e.read(s),r++;return-1!==r&&r<256?r:t.msg=_,-1}var V,Z=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0],W=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13],X=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,7],Y=new r.Buf8(512),q=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];!function(){for(var t=0;t<144;t++)Y[t]=8;for(t=144;t<256;t++)Y[t]=9;for(t=256;t<280;t++)Y[t]=7;for(t=280;t<288;t++)Y[t]=8;for(t=0;t<30;t++)q[t]=new r.Buf16(2);for(t=0;t<30;t++){var e=q[t];e[0]=5,e[1]=t<2?0:t<10?t-2:t<18?t-9:t-17}}();var $=new r.Buf16(576);for(V=0;V<144;V++)$[2*V]=8;for(V=144;V<256;V++)$[2*V]=9;for(V=256;V<280;V++)$[2*V]=7;for(V=280;V<288;V++)$[2*V]=8;for(V=0;V<30;V++)$[2*576+2*V]=5,$[2*576+2*V+1]=V<2?0:V<10?V-2:V<18?V-9:V-17;var tt=[new C(0,0,0,D,0,0,0,$,Z,W,286,15,0,0,0),new C(0,0,0,D,0,0,0,$,X,Y,30,15,0,0,0)];for(V=0;V<2;V++){var et=tt[V];et.has_stree=!0,et.next=new r.Buf16(et.max_length+1),et.prev=new r.Buf16(et.max_length+1)}var it=function(){function t(t,e,i,s,n){this.static_len=t,this.opt_len=e,this.matches=i,this.last_lit=s,this.head=n}return t}();function st(t){t.status=0,t.pending_buf=new r.Buf8(2*t.window_size),t.pending_buf_size=2*t.window_size,t.window=new r.Buf8(2*t.window_size),t.prev=new r.Buf16(t.w_size),t.head=new r.Buf16(32768),t.dyn_ltree=new r.Buf16(1146),t.dyn_dtree=new r.Buf16(244),t.bl_tree=new r.Buf16(78),t.bl_count=new r.Buf16(16),t.heap=new r.Buf16(573),t.depth=new r.Buf16(573),t.l_desc=new C(t.dyn_ltree,0,0,D,0,0,0,$,Z,W,286,15,0,0,0),t.d_desc=new C(t.dyn_dtree,0,0,D,0,0,0,$,X,Y,30,15,0,0,0),t.bl_desc=new C(t.bl_tree,0,0,D,0,0,15,null,0,0,19,7,0,0,0),t.l_desc.has_stree=!0,t.l_desc.next=new r.Buf16(16),t.l_desc.prev=new r.Buf16(16),t.d_desc.has_stree=!0,t.d_desc.next=new r.Buf16(16),t.d_desc.prev=new r.Buf16(16)}var nt=function(){function t(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offset=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distbits=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens=new r.Buf16(320),this.work=new r.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was=0}return t.prototype.inflateReset=function(t){return t&&(t.mode=0),null},t.prototype.inflateReset2=function(t,e){return t&&e<0||e>16?(s.msg="windowBits",2):(t.mode=0,t.wrap=(e>>4)+1,t.wbits=e,null)},t.prototype.inflateInit2=function(e,i){if(!e)return 2;var s=new t;return e.state=s,s.window=null,s.mode=0,e.inflateReset2(s,i)},t}();var rt=[96,124,156,188,220,252,284,316,348,380,412,444,476,508,540,572,604,636,668,700,732,764,796,828,860,892,924,956,988],at=[0,24,48,72,96,120,144,168,192,216,240,264,288,312,336,360,384,408,432,456,480,504,528,552,576,600,624,648,672],ot=function(){function t(){this.mode=0,this.lit=0,this.get=0,this.dist=0}return t}();var ht=function(){function t(){this.strm=null,this.mode=0,this.state=null,this.total_in=0,this.total_out=0,this.msg=null}return t.prototype.inflateInit2=function(t,e){return this.strm=t,a.inflateInit2(t,e)},t}(),lt=function(){function t(){this.text=0,this.time=0,this.xflags=0,this.os=0,this.extra=null,this.extra_len=0,this.name="",this.comment="",this.hcrc=0,this.done=!1}return t}();var ct=Object.keys||function(t){var e=[];for(var i in t)t.hasOwnProperty(i)&&e.push(i);return e};var ut=!0,ft="pako inflate; version 1.0.0;",dt=function(t,e){e&&Object.keys(e).forEach((function(i){ut[i]=e[i]}))};var pt=function(t,e){var i,s,n,o,h,l,c,u,f,d,p,g,_,m,b,y,w,v,k,z,x,A,E,C,D,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,q,$,tt,et,it,st,nt,rt,at,ot,ht,lt,ct,ut,ft,dt,pt,gt,_t,mt,bt,yt,wt,vt,kt,zt,xt,At,Et,Bt=Object.prototype.toString,Ct=Object.prototype.hasOwnProperty,Dt=function(t){this.options=i({level:-1,method:8,chunkSize:16384,windowBits:15,memLevel:8,strategy:0,to:""},t||{});var e=this.options;e.raw&&e.windowBits>0?e.windowBits=-e.windowBits:e.gzip&&e.windowBits>0&&e.windowBits<16&&(e.windowBits+=16),this.err=0,this.msg="",this.ended=!1,this.chunks=[],this.strm=new ht,this.strm.avail_out=0},Ft=function(t,e){if(Dt.call(this,t),t&&t.dictionary&&!this.strm.adler){this.strm.adler=0;var i=t.dictionary;if("string"==typeof i)i=string2buf(i);else if("[object ArrayBuffer]"===Bt.call(i))i=new Uint8Array(i);if(t.raw)if(i.length>0){if((ot=i,ht=this.strm,(lt=Dt)&&(ot=new Uint8Array(ot),void 0===(ct=ht).inflateReset2||(ct.inflateReset2(ht.state,lt)||(ht.msg="windowBits")))))return}var s;var n,r=i.length;for(n=0;n<r;n++)s=dt,s=t?t[n]:i[n]}var ot,ht,lt,ct};return Dt.prototype.push=function(t,e){var i,s,n,r,a,o=this.strm,h=this.options.chunkSize,l=!1;if(this.ended)return!1;s=e===~~e?e:!0===e?4:0,"string"==typeof t?o.input=string2buf(t):"[object ArrayBuffer]"===Bt.call(t)?o.input=new Uint8Array(t):o.input=t,o.next_in=0,o.avail_in=o.input.length;do{if(0===o.avail_out&&(o.output=new r.Buf8(h),o.next_out=0,o.avail_out=h),1!==(i=St(o,null))&&0!==i)return this.onEnd(i),this.ended=!0,!1;0!==o.avail_out&&(0!==o.avail_in||4!==s&&2!==s||(s=0))}while((o.avail_in>0||0===o.avail_out)&&1===i);return this.onData(),l},Dt.prototype.onData=function(){this.chunks.push(t(this.strm.output,this.strm.next_out))},Dt.prototype.onEnd=function(t){t===0&&(this.result=this.chunks.join("")),this.chunks=[],this.err=t,this.msg=this.strm.msg},Dt}(),gt=function(t,e){return new pt(t,e)};return gt}();var We=function(t){if("string"==typeof t){for(var e=t.split(""),i=[],s=0;s<e.length;s++){var n=e[s].charCodeAt(0);n<128?i.push(n):n<2048?i.push(192|n>>>6,128|63&n):n<55296||n>=57344?i.push(224|n>>>12,128|n>>>6&63,128|63&n):(s++,n=65536+((1023&n)<<10|1023&e[s].charCodeAt(0)),i.push(240|n>>>18,128|n>>>12&63,128|n>>>6&63,128|63&n))}return new Uint8Array(i)}if(null===t||void 0===t)throw"null buffer";if(t instanceof Uint8Array)return t;if("[object ArrayBuffer]"===Object.prototype.toString.call(t))return new Uint8Array(t);throw"unknown type"};function Xe(t,e){this.index="number"==typeof e?e:0,this.i=0,this.buf=t}return Xe.prototype.read=function(t){var e=this.buf[this.index];return this.index++,e&255},Xe}(),Ge=function(){function t(t){this.buf=t,this.offset=0,this.size=t.length}return t}(),He=function(){function t(t,e){this.buf=t,this.ptr=e}return t}(),Ie=function(){function t(){}return t}(),Je=function(){function t(){this.text=0,this.time=0,this.xflags=0,this.os=0,this.extra=null,this.extra_len=0,this.name="",this.comment="",this.hcrc=0,this.done=!1}return t}();return{inflate:function(t){return a.inflate(t)}}}();
-</script>
-
-<script>
-/* =========================================================
-   GEN 3: CRC32 VALIDATION + Bilinear Homography Tracking
-   ========================================================= */
 const C = 33, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
 const E = id => document.getElementById(id);
 const video = E('cam'), overlay = E('overlay'), octx = overlay.getContext('2d');
-const status = E('status'), bar = E('bar'), framesE = E('frames'), szE = E('sz');
-const dlBtn = E('dl'), camSel = E('camSel');
+const status = E('status'), bar = E('bar'), framesE = E('frames');
+const missingE = E('missing'), dlBtn = E('dl'), camSel = E('camSel');
 
 async function enumCams(){
   try {
@@ -96,6 +91,7 @@ function processFrame(pixels, w, h) {
     let dx = tr.x - tl.x, dy = tr.y - tl.y;
     if (Math.sqrt(dx*dx + dy*dy) < 50) return null;
 
+    // 绘制绿色的瞄准框
     octx.strokeStyle = '#0f0'; octx.lineWidth = 4; octx.beginPath();
     octx.moveTo(tl.x, tl.y); octx.lineTo(tr.x, tr.y);
     octx.lineTo(br.x, br.y); octx.lineTo(bl.x, bl.y);
@@ -121,7 +117,6 @@ function processFrame(pixels, w, h) {
         }
     }
 
-    // 136 bytes = 1088 bits
     let bytes = new Uint8Array(136);
     for(let i=0; i<136; i++) {
         let b = 0;
@@ -129,11 +124,9 @@ function processFrame(pixels, w, h) {
         bytes[i] = b;
     }
 
-    // 提取帧数据 (132 bytes) 和 期望 CRC (4 bytes)
     let frame_data = bytes.slice(0, 132);
     let expected_crc = ((bytes[132]<<24) | (bytes[133]<<16) | (bytes[134]<<8) | bytes[135]) >>> 0;
     
-    // JS 实时计算 CRC32
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
         calc_crc ^= frame_data[i];
@@ -143,7 +136,6 @@ function processFrame(pixels, w, h) {
     }
     calc_crc = (calc_crc ^ 0xFFFFFFFF) >>> 0;
 
-    // 数学神盾拦截：如果不等，直接抛弃此帧！
     if (calc_crc !== expected_crc) return null; 
 
     let idx = (frame_data[0]<<8) | frame_data[1];
@@ -151,6 +143,28 @@ function processFrame(pixels, w, h) {
     if (idx >= total || total < 1 || total > 9999) return null;
     
     return { index: idx, total, payload: frame_data.slice(4) };
+}
+
+function updateMissing(got, total) {
+    // 当收集进度超过 80% 时，开始提示缺失的帧号
+    if (got / total > 0.8 && got < total) {
+        let missing = [];
+        for (let i = 0; i < total; i++) {
+            if (!rx[i]) missing.push(i + 1); // 显示给用户看时，从1开始数比较直观
+        }
+        if (missing.length > 0) {
+            // 最多显示10个，太多了挡屏幕
+            if (missing.length > 10) {
+                missingE.textContent = `Missing: ${missing.slice(0, 10).join(', ')} ...`;
+            } else {
+                missingE.textContent = `Missing: ${missing.join(', ')}`;
+            }
+        } else {
+            missingE.textContent = '';
+        }
+    } else {
+        missingE.textContent = '';
+    }
 }
 
 function reassemble(){
@@ -165,7 +179,7 @@ function reassemble(){
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
-  try { raw = pako.inflate(merged.slice(4+nameLen)); }
+  try { raw = window.pako.inflate(merged.slice(4+nameLen)); }
   catch(e) { status.textContent='Decompress err: '+e.message; return null; }
   return { filename: fname, data: raw };
 }
@@ -184,6 +198,9 @@ function loop(){
   let vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
   overlay.width = vw; overlay.height = vh;
+  
+  // 优化：每次重绘前清空画布，防止残影
+  octx.clearRect(0, 0, vw, vh);
   octx.drawImage(video, 0, 0, vw, vh);
   
   let pix = octx.getImageData(0, 0, vw, vh).data;
@@ -196,19 +213,23 @@ function loop(){
   if(!rx[index]) {
       rx[index] = payload;
       let got = Object.keys(rx).length, pct = Math.round(got/totalF*100);
-      bar.style.width = pct+'%'; framesE.textContent = got+'/'+totalF;
+      bar.style.width = pct+'%'; 
+      framesE.textContent = `${got} / ${totalF}`;
+      updateMissing(got, totalF); // 调用追踪器
   }
   
-  status.textContent = 'Frame '+(index+1)+' of '+totalF + ' (Valid!)';
+  // 显示当前捕捉到的有效帧号 (加 1 是为了给用户看)
+  status.textContent = `Valid Hit: Frame ${index + 1}`;
 
   if(Object.keys(rx).length >= totalF){
-    status.textContent = 'Success! CRC Passed.';
+    status.textContent = 'Success! CRC Passed & Decoded.';
     live = false; cancelAnimationFrame(rid);
+    octx.clearRect(0, 0, vw, vh); // 成功后清理画面
     if(stream) stream.getTracks().forEach(t => t.stop());
     let file = reassemble();
     if(file){
       dlBtn.disabled = false; dlBtn.style.background = '#0f0';
-      dlBtn.textContent = 'Download ' + file.filename;
+      dlBtn.textContent = 'Download: ' + file.filename;
       dlBtn.onclick = () => dlFile(file);
       if(navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }
