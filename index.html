@@ -125,6 +125,7 @@ function processFrame(pixels, w, h) {
         }
     }
 
+  
     // 面积过滤：如果捕捉到的青色零零散散，说明只是环境杂光，直接拒收
     if (cyan < 12 || !tl || !tr || !bl || !br) return null;
     let dx = tr.x - tl.x, dy = tr.y - tl.y;
