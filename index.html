@@ -31,6 +31,9 @@ max-width:140px;text-align:right;line-height:1.4}
   <div id="status">Starting camera…</div>
   <div id="bar-wrap"><div id="bar"></div></div>
   <div id="info"><span id="frames"></span><span id="sz"></span></div>
+  
+  <select id="camSel" style="display:block; margin: 8px auto; padding: 4px; border-radius: 4px; background: #333; color: white; border: 1px solid #555;"></select>
+  
   <button id="dl" disabled>Download file</button>
 </div>
 
@@ -333,7 +336,6 @@ function loop(ts){
 /* ---- Init ---- */
 enumCams().then(()=>startCam(curDev));
 
-</script>
 </script>
 </body>
 </html>
