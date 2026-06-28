@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — V11 (Anti-Interference)</title>
+<title>Optical Rx — V12 (FEC)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -33,8 +33,7 @@ button:disabled{background:#333;color:#666}
 </div>
 
 <script>
-// ================= V11 网格配置 (49x49) =================
-const C = 49, PAD = 2, TOTAL_C = C + PAD * 2;
+const C = 41, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
@@ -52,12 +51,10 @@ async function enumCams(){
       o.value = d.deviceId; o.textContent = d.label || 'Camera ' + (i + 1);
       camSel.appendChild(o);
     });
-    
     if (devices.length > 0) { 
       let savedCam = localStorage.getItem('preferred_cam');
-      if (savedCam && devices.find(d => d.deviceId === savedCam)) {
-          curDev = savedCam;
-      } else {
+      if (savedCam && devices.find(d => d.deviceId === savedCam)) { curDev = savedCam; } 
+      else {
           let backCam = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
           curDev = backCam ? backCam.deviceId : devices[0].deviceId; 
       }
@@ -68,20 +65,16 @@ async function enumCams(){
 
 async function startCam(deviceId){
   if(stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  
-  // 核心优化1：直接索要原生低清流 640x480。让高像素镜头“变瞎但变聪明”
   let videoConstraints = {
     facingMode: 'environment',
-    width: { ideal: 640 }, 
-    height: { ideal: 480 },
+    width: { ideal: 1280 }, height: { ideal: 720 },
     advanced: [{ focusMode: "continuous" }]
   };
   if(deviceId) videoConstraints.deviceId = { exact: deviceId };
-
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
     video.srcObject = stream; await video.play();
-    status.textContent = '扫描中... (低清抗扰模式)';
+    status.textContent = '扫描中... (二维矩阵FEC自愈引擎开启)';
     status.style.color = '#0f0';
     live = true; requestAnimationFrame(loop);
   } catch(e) {
@@ -97,11 +90,7 @@ async function startCam(deviceId){
   }
 }
 
-camSel.onchange = function() { 
-    curDev = camSel.value; 
-    localStorage.setItem('preferred_cam', curDev);
-    startCam(curDev); 
-};
+camSel.onchange = function() { curDev = camSel.value; localStorage.setItem('preferred_cam', curDev); startCam(curDev); };
 
 function processFrame(pixels, w, h) {
     let minSum = 1e9, maxSum = -1e9, minDiff = 1e9, maxDiff = -1e9;
@@ -111,9 +100,6 @@ function processFrame(pixels, w, h) {
         for(let x=0; x<w; x+=2) {
             let i = (y * w + x) * 4;
             let r = pixels[i], g = pixels[i+1], b = pixels[i+2];
-            
-            // 核心优化2：严苛的光谱比例校验，彻底解决“绿框乱跳”！
-            // 必须绿蓝双高、红色极其暗淡，且绿蓝基本相等。日光灯、墙壁反光会在这道关卡被100%过滤
             if (g > 90 && b > 90 && r < g * 0.55 && r < b * 0.55 && Math.abs(g - b) < 35) {
                 cyan++;
                 let sum = x + y, diff = x - y;
@@ -125,8 +111,6 @@ function processFrame(pixels, w, h) {
         }
     }
 
-  
-    // 面积过滤：如果捕捉到的青色零零散散，说明只是环境杂光，直接拒收
     if (cyan < 12 || !tl || !tr || !bl || !br) return null;
     let dx = tr.x - tl.x, dy = tr.y - tl.y;
     if (Math.sqrt(dx*dx + dy*dy) < 40) return null;
@@ -148,9 +132,7 @@ function processFrame(pixels, w, h) {
             if (px >= 0 && px < w && py >= 0 && py < h) {
                 let i = (py * w + px) * 4;
                 rawGrays.push((pixels[i] + pixels[i+1] + pixels[i+2]) / 3);
-            } else {
-                rawGrays.push(-1);
-            }
+            } else { rawGrays.push(-1); }
         }
     }
 
@@ -169,16 +151,44 @@ function processFrame(pixels, w, h) {
         else bits.push(g > threshold ? 1 : 0);
     }
 
-    // ================= 容量匹配：300 字节 =================
-    let bytes = new Uint8Array(300);
-    for(let i=0; i<300; i++) {
+    // ==========================================
+    // ⚙️ 核心黑科技：智能矩阵级前向自动纠错 (FEC)
+    // ==========================================
+    let bad_rows = [], bad_cols = [];
+    // 验证前 40 行的行异或校验
+    for(let y=0; y<40; y++) {
+        let sum = 0;
+        for(let x=0; x<41; x++) sum ^= bits[y*41 + x];
+        if(sum !== 0) bad_rows.push(y);
+    }
+    // 验证所有 41 列的列异或校验
+    for(let x=0; x<41; x++) {
+        let sum = 0;
+        for(let y=0; y<41; y++) sum ^= bits[y*41 + x];
+        if(sum !== 0) bad_cols.push(x);
+    }
+
+    // 如果恰好检测到一行一列总计出错，交叉点就是被看错的反光/畸变像素！自动修复它！
+    if(bad_rows.length === 1 && bad_cols.length === 1) {
+        let error_idx = bad_rows[0] * 41 + bad_cols[0];
+        bits[error_idx] ^= 1; // 瞬间纠正错误比特！
+    }
+
+    // 纠错完毕，剥离出 40x40 核心数据区，重新还原成 200 字节
+    let data_bits = [];
+    for(let y=0; y<40; y++) {
+        for(let x=0; x<40; x++) { data_bits.push(bits[y*41 + x]); }
+    }
+
+    let bytes = new Uint8Array(200);
+    for(let i=0; i<200; i++) {
         let b = 0;
-        for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
+        for(let j=0; j<8; j++) b = (b<<1) | (data_bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let frame_data = bytes.slice(0, 296);
-    let expected_crc = ((bytes[296]<<24) | (bytes[297]<<16) | (bytes[298]<<8) | bytes[299]) >>> 0;
+    let frame_data = bytes.slice(0, 196);
+    let expected_crc = ((bytes[196]<<24) | (bytes[197]<<16) | (bytes[198]<<8) | bytes[199]) >>> 0;
     
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
@@ -201,13 +211,9 @@ function processFrame(pixels, w, h) {
 function updateMissing(got, total) {
     if (got < total) {
         let missing = [];
-        for (let i = 0; i < total; i++) {
-            if (!rx[i]) missing.push(i + 1);
-        }
+        for (let i = 0; i < total; i++) { if (!rx[i]) missing.push(i + 1); }
         missingE.textContent = missing.length === 0 ? '' : `待补漏帧: ${missing.join(', ')}`;
-    } else {
-        missingE.textContent = '';
-    }
+    } else { missingE.textContent = ''; }
 }
 
 function reassemble(){
@@ -218,7 +224,7 @@ function reassemble(){
   let merged=new Uint8Array(tLen), off=0;
   for(let p of parts){ merged.set(p, off); off+=p.length; }
   
-  if(merged[0]!==0xAB || merged[1]!==0x11) { status.textContent='校验头损坏 (请确保电脑运行的是 V11 代码)'; return null; }
+  if(merged[0]!==0xAB || merged[1]!==0x0C) { status.textContent='校验头损坏 (请确保电脑运行的是 V12 代码)'; return null; }
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
@@ -237,7 +243,6 @@ function dlFile(file){
 function loop(){
   if(!live) return;
   rid = requestAnimationFrame(loop);
-
   let vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
   overlay.width = vw; overlay.height = vh;
@@ -249,7 +254,7 @@ function loop(){
   let result = processFrame(pix, vw, vh);
   
   if(result === "CRC_ERROR") {
-      status.textContent = '🔄 捕捉到残影，正在等待画面同步...';
+      status.textContent = '🔄 捕捉到残影/反光，自动修复失败，等待下一帧同步...';
       status.style.color = '#ffaa00';
       return;
   }
@@ -284,7 +289,6 @@ function loop(){
     }
   }
 }
-
 enumCams().then(()=>startCam(curDev));
 </script>
 </body>
