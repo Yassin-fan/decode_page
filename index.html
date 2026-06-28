@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — V4 Ultra (Stable)</title>
+<title>Optical Rx — V5 (64x64)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -14,7 +14,6 @@ body{background:#000;color:#eee;font-family:system-ui,sans-serif;height:100dvh;d
 #bar-wrap{height:10px;background:#333;border-radius:5px;overflow:hidden}
 #bar{height:100%;background:#0f0;width:0;transition:width .2s}
 #info{display:flex;justify-content:space-between;font-size:14px;font-weight:bold}
-/* 核心修改：限制最高高度，支持内部滚动，防止帧数太多撑爆屏幕 */
 #missing{color:#ffaa00;font-size:13px;font-weight:bold;max-height:90px;overflow-y:auto;word-break:break-word}
 select{padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;width:100%}
 button{padding:14px;font-size:18px;border:none;border-radius:8px;background:#0a0;color:#000;cursor:pointer;font-weight:bold;width:100%}
@@ -25,16 +24,17 @@ button:disabled{background:#333;color:#666}
 <video id="cam" autoplay playsinline muted></video>
 <canvas id="overlay"></canvas>
 <div id="hud">
-  <div id="status">Starting camera…</div>
+  <div id="status">正在启动摄像头…</div>
   <div id="bar-wrap"><div id="bar"></div></div>
   <div id="info"><span id="frames">0 / 0</span></div>
   <div id="missing"></div> 
   <select id="camSel"></select>
-  <button id="dl" disabled>Download File</button>
+  <button id="dl" disabled>下载文件</button>
 </div>
 
 <script>
-const C = 81, PAD = 2, TOTAL_C = C + PAD * 2;
+// ================= V5 网格配置 (64x64) =================
+const C = 64, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
@@ -54,11 +54,16 @@ async function enumCams(){
     });
     
     if (devices.length > 0) { 
-      let backCam = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
-      curDev = backCam ? backCam.deviceId : devices[0].deviceId; 
+      let savedCam = localStorage.getItem('preferred_cam');
+      if (savedCam && devices.find(d => d.deviceId === savedCam)) {
+          curDev = savedCam;
+      } else {
+          let backCam = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+          curDev = backCam ? backCam.deviceId : devices[0].deviceId; 
+      }
       camSel.value = curDev; 
     }
-  } catch(e) { status.textContent = 'Enum err: ' + e.message; }
+  } catch(e) { status.textContent = '设备枚举失败: ' + e.message; }
 }
 
 async function startCam(deviceId){
@@ -75,7 +80,7 @@ async function startCam(deviceId){
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
     video.srcObject = stream; await video.play();
-    status.textContent = 'Scanning... (V4 Ultra HD)';
+    status.textContent = '扫描中... (V5 黄金稳定版)';
     status.style.color = '#0f0';
     live = true; requestAnimationFrame(loop);
   } catch(e) {
@@ -84,14 +89,18 @@ async function startCam(deviceId){
         if(deviceId) safeConstraints.deviceId = { exact: deviceId };
         stream = await navigator.mediaDevices.getUserMedia({ video: safeConstraints, audio: false });
         video.srcObject = stream; await video.play();
-        status.textContent = 'Scanning... (Standard Mode)';
+        status.textContent = '扫描中... (标准模式)';
         status.style.color = '#0f0';
         live = true; requestAnimationFrame(loop);
-    } catch(e2) { status.textContent = 'Camera err: ' + e2.message; }
+    } catch(e2) { status.textContent = '摄像头错误: ' + e2.message; }
   }
 }
 
-camSel.onchange = function() { curDev = camSel.value; startCam(curDev); };
+camSel.onchange = function() { 
+    curDev = camSel.value; 
+    localStorage.setItem('preferred_cam', curDev);
+    startCam(curDev); 
+};
 
 function processFrame(pixels, w, h) {
     let minSum = 1e9, maxSum = -1e9, minDiff = 1e9, maxDiff = -1e9;
@@ -139,15 +148,17 @@ function processFrame(pixels, w, h) {
         }
     }
 
-    let bytes = new Uint8Array(818);
-    for(let i=0; i<818; i++) {
+    // ================= 容量匹配：512 字节 =================
+    // 504(Payload) + 4(Header) + 4(CRC) = 512 bytes
+    let bytes = new Uint8Array(512);
+    for(let i=0; i<512; i++) {
         let b = 0;
         for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let frame_data = bytes.slice(0, 814);
-    let expected_crc = ((bytes[814]<<24) | (bytes[815]<<16) | (bytes[816]<<8) | bytes[817]) >>> 0;
+    let frame_data = bytes.slice(0, 508);
+    let expected_crc = ((bytes[508]<<24) | (bytes[509]<<16) | (bytes[510]<<8) | bytes[511]) >>> 0;
     
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
@@ -168,13 +179,12 @@ function processFrame(pixels, w, h) {
 }
 
 function updateMissing(got, total) {
-    // 核心修改：无情地全量展示所有缺失的帧
     if (got < total) {
         let missing = [];
         for (let i = 0; i < total; i++) {
             if (!rx[i]) missing.push(i + 1);
         }
-        missingE.textContent = missing.length === 0 ? '' : `Missing: ${missing.join(', ')}`;
+        missingE.textContent = missing.length === 0 ? '' : `待补漏帧: ${missing.join(', ')}`;
     } else {
         missingE.textContent = '';
     }
@@ -188,12 +198,13 @@ function reassemble(){
   let merged=new Uint8Array(tLen), off=0;
   for(let p of parts){ merged.set(p, off); off+=p.length; }
   
-  if(merged[0]!==0xAB || merged[1]!==0x04) { status.textContent='Bad header (Wrong version)'; return null; }
+  // 校验魔数 0xAB 0x05
+  if(merged[0]!==0xAB || merged[1]!==0x05) { status.textContent='校验头损坏 (请确保电脑运行的是 V5 代码)'; return null; }
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
   try { raw = window.pako.inflate(merged.slice(4+nameLen)); }
-  catch(e) { status.textContent='Decompress err: '+e.message; return null; }
+  catch(e) { status.textContent='解压失败: '+e.message; return null; }
   return { filename: fname, data: raw };
 }
 
@@ -219,7 +230,7 @@ function loop(){
   let result = processFrame(pix, vw, vh);
   
   if(result === "CRC_ERROR") {
-      status.textContent = '❌ CRC Error (Hold Steady / Avoid Glare)';
+      status.textContent = '❌ 数据残缺 (请避开反光 / 保持手稳)';
       status.style.color = '#ffaa00';
       return;
   }
@@ -236,11 +247,11 @@ function loop(){
       updateMissing(got, totalF); 
   }
   
-  status.textContent = `✅ Valid Hit: Frame ${index + 1}`;
+  status.textContent = `✅ 成功截获: 第 ${index + 1} 帧`;
   status.style.color = '#0f0';
 
   if(Object.keys(rx).length >= totalF){
-    status.textContent = '🎉 Success! CRC Passed & Decoded.';
+    status.textContent = '🎉 全部接收完毕！数据校验通过。';
     status.style.color = '#0f0';
     live = false; cancelAnimationFrame(rid);
     octx.clearRect(0, 0, vw, vh); 
@@ -248,7 +259,7 @@ function loop(){
     let file = reassemble();
     if(file){
       dlBtn.disabled = false; dlBtn.style.background = '#0f0';
-      dlBtn.textContent = 'Download: ' + file.filename;
+      dlBtn.textContent = '下载文件: ' + file.filename;
       dlBtn.onclick = () => dlFile(file);
       if(navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }
