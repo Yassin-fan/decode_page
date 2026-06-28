@@ -8,8 +8,14 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#111;color:#eee;font-family:system-ui,sans-serif;height:100dvh;
 display:flex;flex-direction:column;overflow:hidden}
-#cam{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
-#overlay{position:absolute;top:0;left:0;width:100%;height:100%}
+#cam, #overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* 关键：改成 contain，保持物理比例，绝不拉伸和裁切 */
+}
 #hud{position:absolute;bottom:0;left:0;right:0;padding:16px;
 background:linear-gradient(transparent,rgba(0,0,0,.85));z-index:10}
 #status{font-size:14px;opacity:.8;margin-bottom:6px}
@@ -84,7 +90,7 @@ async function startCam(deviceId){
   status.textContent='Starting camera...';
   let constraints={video:{facingMode:'environment'},audio:false};
   if(deviceId)constraints.video={deviceId:{exact:deviceId}};
-  if(!deviceId){constraints.video.width={ideal:1280};constraints.video.height={ideal:720}}
+  // 删掉原本强制宽高，让手机自动分配原生比例 if(!deviceId){constraints.video.width={ideal:1280};constraints.video.height={ideal:720}}
   try{
     stream=await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject=stream;
