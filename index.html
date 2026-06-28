@@ -3,18 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — V3 HD Decoder</title>
+<title>Optical Rx — V4 Ultra (Stable)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;color:#eee;font-family:system-ui,sans-serif;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 #cam,#overlay{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}
-#hud{position:absolute;bottom:0;left:0;right:0;padding:16px;background:linear-gradient(transparent,rgba(0,0,0,.9));z-index:10;display:flex;flex-direction:column;gap:8px}
+#hud{position:absolute;bottom:0;left:0;right:0;padding:16px;background:linear-gradient(transparent,rgba(0,0,0,.95));z-index:10;display:flex;flex-direction:column;gap:8px}
 #status{font-size:16px;font-weight:bold;color:#0f0}
 #bar-wrap{height:10px;background:#333;border-radius:5px;overflow:hidden}
 #bar{height:100%;background:#0f0;width:0;transition:width .2s}
 #info{display:flex;justify-content:space-between;font-size:14px;font-weight:bold}
-#missing{color:#ff4444;font-size:14px;font-weight:bold;min-height:20px;word-break:break-all}
+/* 核心修改：限制最高高度，支持内部滚动，防止帧数太多撑爆屏幕 */
+#missing{color:#ffaa00;font-size:13px;font-weight:bold;max-height:90px;overflow-y:auto;word-break:break-word}
 select{padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:4px;width:100%}
 button{padding:14px;font-size:18px;border:none;border-radius:8px;background:#0a0;color:#000;cursor:pointer;font-weight:bold;width:100%}
 button:disabled{background:#333;color:#666}
@@ -24,7 +25,7 @@ button:disabled{background:#333;color:#666}
 <video id="cam" autoplay playsinline muted></video>
 <canvas id="overlay"></canvas>
 <div id="hud">
-  <div id="status">Starting camera… (HD requested)</div>
+  <div id="status">Starting camera…</div>
   <div id="bar-wrap"><div id="bar"></div></div>
   <div id="info"><span id="frames">0 / 0</span></div>
   <div id="missing"></div> 
@@ -33,8 +34,7 @@ button:disabled{background:#333;color:#666}
 </div>
 
 <script>
-// ================= 网格升级 =================
-const C = 65, PAD = 2, TOTAL_C = C + PAD * 2;
+const C = 81, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
@@ -52,7 +52,12 @@ async function enumCams(){
       o.value = d.deviceId; o.textContent = d.label || 'Camera ' + (i + 1);
       camSel.appendChild(o);
     });
-    if (devices.length > 0) { curDev = devices[0].deviceId; camSel.value = curDev; }
+    
+    if (devices.length > 0) { 
+      let backCam = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+      curDev = backCam ? backCam.deviceId : devices[0].deviceId; 
+      camSel.value = curDev; 
+    }
   } catch(e) { status.textContent = 'Enum err: ' + e.message; }
 }
 
@@ -65,28 +70,24 @@ async function startCam(deviceId){
     height: { ideal: 1080, min: 720 },
     advanced: [{ focusMode: "continuous" }]
   };
-
   if(deviceId) videoConstraints.deviceId = { exact: deviceId };
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
-    video.srcObject = stream; 
-    await video.play();
-    status.textContent = 'Scanning... (HD Mode ON)';
+    video.srcObject = stream; await video.play();
+    status.textContent = 'Scanning... (V4 Ultra HD)';
+    status.style.color = '#0f0';
     live = true; requestAnimationFrame(loop);
   } catch(e) {
-    console.warn("HD mode rejected, falling back...", e);
     try {
         let safeConstraints = { facingMode: 'environment' };
         if(deviceId) safeConstraints.deviceId = { exact: deviceId };
         stream = await navigator.mediaDevices.getUserMedia({ video: safeConstraints, audio: false });
-        video.srcObject = stream; 
-        await video.play();
+        video.srcObject = stream; await video.play();
         status.textContent = 'Scanning... (Standard Mode)';
+        status.style.color = '#0f0';
         live = true; requestAnimationFrame(loop);
-    } catch(e2) {
-        status.textContent = 'Camera err: ' + e2.message; 
-    }
+    } catch(e2) { status.textContent = 'Camera err: ' + e2.message; }
   }
 }
 
@@ -124,7 +125,6 @@ function processFrame(pixels, w, h) {
         for(let col=0; col<C; col++) {
             let u = (col + PAD + 0.5) / TOTAL_C;
             let v = (row + PAD + 0.5) / TOTAL_C;
-            
             let tx = tl.x + u*(tr.x - tl.x), ty = tl.y + u*(tr.y - tl.y);
             let bx = bl.x + u*(br.x - bl.x), by = bl.y + u*(br.y - bl.y);
             let px = Math.round(tx + v*(bx - tx)), py = Math.round(ty + v*(by - ty));
@@ -139,16 +139,15 @@ function processFrame(pixels, w, h) {
         }
     }
 
-    // ================= 容量升级：528 字节 =================
-    let bytes = new Uint8Array(528);
-    for(let i=0; i<528; i++) {
+    let bytes = new Uint8Array(818);
+    for(let i=0; i<818; i++) {
         let b = 0;
         for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let frame_data = bytes.slice(0, 524);
-    let expected_crc = ((bytes[524]<<24) | (bytes[525]<<16) | (bytes[526]<<8) | bytes[527]) >>> 0;
+    let frame_data = bytes.slice(0, 814);
+    let expected_crc = ((bytes[814]<<24) | (bytes[815]<<16) | (bytes[816]<<8) | bytes[817]) >>> 0;
     
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
@@ -159,7 +158,7 @@ function processFrame(pixels, w, h) {
     }
     calc_crc = (calc_crc ^ 0xFFFFFFFF) >>> 0;
 
-    if (calc_crc !== expected_crc) return null; 
+    if (calc_crc !== expected_crc) return "CRC_ERROR"; 
 
     let idx = (frame_data[0]<<8) | frame_data[1];
     let total = (frame_data[2]<<8) | frame_data[3];
@@ -169,18 +168,13 @@ function processFrame(pixels, w, h) {
 }
 
 function updateMissing(got, total) {
-    if (got / total > 0.8 && got < total) {
+    // 核心修改：无情地全量展示所有缺失的帧
+    if (got < total) {
         let missing = [];
         for (let i = 0; i < total; i++) {
             if (!rx[i]) missing.push(i + 1);
         }
-        if (missing.length > 0) {
-            missingE.textContent = missing.length > 10 
-                ? `Missing: ${missing.slice(0, 10).join(', ')} ...` 
-                : `Missing: ${missing.join(', ')}`;
-        } else {
-            missingE.textContent = '';
-        }
+        missingE.textContent = missing.length === 0 ? '' : `Missing: ${missing.join(', ')}`;
     } else {
         missingE.textContent = '';
     }
@@ -194,8 +188,7 @@ function reassemble(){
   let merged=new Uint8Array(tLen), off=0;
   for(let p of parts){ merged.set(p, off); off+=p.length; }
   
-  // 协议魔数校验：0xAB 0x03
-  if(merged[0]!==0xAB || merged[1]!==0x03) { status.textContent='Bad header (Wrong version)'; return null; }
+  if(merged[0]!==0xAB || merged[1]!==0x04) { status.textContent='Bad header (Wrong version)'; return null; }
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
@@ -224,6 +217,12 @@ function loop(){
   
   let pix = octx.getImageData(0, 0, vw, vh).data;
   let result = processFrame(pix, vw, vh);
+  
+  if(result === "CRC_ERROR") {
+      status.textContent = '❌ CRC Error (Hold Steady / Avoid Glare)';
+      status.style.color = '#ffaa00';
+      return;
+  }
   if(!result) return;
   
   let {index, total, payload} = result;
@@ -237,10 +236,12 @@ function loop(){
       updateMissing(got, totalF); 
   }
   
-  status.textContent = `Valid Hit: Frame ${index + 1}`;
+  status.textContent = `✅ Valid Hit: Frame ${index + 1}`;
+  status.style.color = '#0f0';
 
   if(Object.keys(rx).length >= totalF){
-    status.textContent = 'Success! CRC Passed & Decoded.';
+    status.textContent = '🎉 Success! CRC Passed & Decoded.';
+    status.style.color = '#0f0';
     live = false; cancelAnimationFrame(rid);
     octx.clearRect(0, 0, vw, vh); 
     if(stream) stream.getTracks().forEach(t => t.stop());
