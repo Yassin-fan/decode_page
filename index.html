@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
-<title>Optical Rx — V6 (Auto-Exposure)</title>
+<title>Optical Rx — V3.1 (Stable HD)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -33,8 +33,8 @@ button:disabled{background:#333;color:#666}
 </div>
 
 <script>
-// ================= V6 参数：更厚的边框(PAD=3) =================
-const C = 64, PAD = 3, TOTAL_C = C + PAD * 2;
+// 回滚至 65x65
+const C = 65, PAD = 2, TOTAL_C = C + PAD * 2;
 let totalF = null, rx = {}, stream = null, live = false, rid = null;
 let devices = [], curDev = null;
 
@@ -80,7 +80,7 @@ async function startCam(deviceId){
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
     video.srcObject = stream; await video.play();
-    status.textContent = '扫描中... (自适应光线开启)';
+    status.textContent = '扫描中... (V3.1 经典高清)';
     status.style.color = '#0f0';
     live = true; requestAnimationFrame(loop);
   } catch(e) {
@@ -129,8 +129,7 @@ function processFrame(pixels, w, h) {
     octx.lineTo(br.x, br.y); octx.lineTo(bl.x, bl.y);
     octx.closePath(); octx.stroke();
 
-    // 核心黑科技：提取所有像素，但先不急着区分黑白
-    let rawGrays = [];
+    let bits = [];
     for(let row=0; row<C; row++) {
         for(let col=0; col<C; col++) {
             let u = (col + PAD + 0.5) / TOTAL_C;
@@ -141,40 +140,24 @@ function processFrame(pixels, w, h) {
             
             if (px >= 0 && px < w && py >= 0 && py < h) {
                 let i = (py * w + px) * 4;
-                rawGrays.push((pixels[i] + pixels[i+1] + pixels[i+2]) / 3);
+                // 回滚到极简稳定的亮度判断
+                let gray = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
+                bits.push(gray > 128 ? 1 : 0);
             } else {
-                rawGrays.push(-1); // 越界标记
+                bits.push(0);
             }
         }
     }
 
-    // 计算当前画面的“动态对比度中轴线”
-    let minG = 255, maxG = 0;
-    for(let g of rawGrays) {
-        if(g !== -1) {
-            if(g < minG) minG = g;
-            if(g > maxG) maxG = g;
-        }
-    }
-    // 如果画面对比度大于30，使用中间值作为阈值；否则退回128保底
-    let threshold = (maxG - minG > 30) ? (minG + maxG) / 2 : 128;
-
-    // 用动态阈值生成最终的 01 比特流
-    let bits = [];
-    for(let g of rawGrays) {
-        if (g === -1) bits.push(0);
-        else bits.push(g > threshold ? 1 : 0);
-    }
-
-    let bytes = new Uint8Array(512);
-    for(let i=0; i<512; i++) {
+    let bytes = new Uint8Array(528);
+    for(let i=0; i<528; i++) {
         let b = 0;
         for(let j=0; j<8; j++) b = (b<<1) | (bits[i*8+j]||0);
         bytes[i] = b;
     }
 
-    let frame_data = bytes.slice(0, 508);
-    let expected_crc = ((bytes[508]<<24) | (bytes[509]<<16) | (bytes[510]<<8) | bytes[511]) >>> 0;
+    let frame_data = bytes.slice(0, 524);
+    let expected_crc = ((bytes[524]<<24) | (bytes[525]<<16) | (bytes[526]<<8) | bytes[527]) >>> 0;
     
     let calc_crc = 0xFFFFFFFF;
     for(let i=0; i<frame_data.length; i++) {
@@ -214,7 +197,7 @@ function reassemble(){
   let merged=new Uint8Array(tLen), off=0;
   for(let p of parts){ merged.set(p, off); off+=p.length; }
   
-  if(merged[0]!==0xAB || merged[1]!==0x06) { status.textContent='校验头损坏 (请确保电脑运行的是 V6 协议)'; return null; }
+  if(merged[0]!==0xAB || merged[1]!==0x03) { status.textContent='校验头损坏 (请确保电脑运行的是 V3 协议)'; return null; }
   let nameLen = (merged[2]<<8) | merged[3];
   let fname = new TextDecoder().decode(merged.slice(4, 4+nameLen));
   let raw;
@@ -245,7 +228,7 @@ function loop(){
   let result = processFrame(pix, vw, vh);
   
   if(result === "CRC_ERROR") {
-      status.textContent = '❌ 数据轻微偏移 (请继续对准屏幕)';
+      status.textContent = '❌ 数据残缺 (请避开反光 / 保持手稳)';
       status.style.color = '#ffaa00';
       return;
   }
