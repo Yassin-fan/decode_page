@@ -41,346 +41,299 @@ var pako=function(){function t(t){let e=t[0],i=t[1],s=t[2],n=t[3];e=((e&1)<<7|(e
 </script>
 
 <script>
-// ── Optical Rx — Phone-side decoder ──────────────────────────────────────
-// Reads colour-grid frames from a live camera feed, decodes the bitstream,
-// decompresses with pako (zlib), and offers the original file for download.
-// ─────────────────────────────────────────────────────────────────────────
+/* ================================================================
+   OPTICAL RECEIVE v2 — improved grid detection + camera selector
+   ================================================================ */
 
-const CFG = {
-  CELLS:       33,      // must match encoder CELLS_PER_SIDE
-  CELL_SZ:     16,      // px per cell in source image (for reference)
-  FINDER:      3,       // finder size in cells
-  PROC_W:      400,     // processing canvas width (downscale for speed)
-  SCAN_EVERY:  150,     // ms between decode attempts
-  COOLDOWN:    400,     // ms before same-index re-decode
+const C={CELLS:33,FINDER:3,CAP:231,SCAN_MS:120,COOL_MS:350};
+const COLOURS=[{r:0,g:0,b:0},{r:210,g:0,b:0},{r:0,g:170,b:0},{r:0,g:0,b:230}];
+
+let totalF=null, rx={}, lastCap={}, stream=null, live=false, rid=null;
+let devices=[], curDev=null;
+
+const E=id=>document.getElementById(id);
+const video=E('cam'),overlay=E('overlay'),octx=overlay.getContext('2d');
+const status=E('status'),bar=E('bar'),framesE=E('frames'),szE=E('sz');
+const dlBtn=E('dl'),logEl=E('log'),camSel=E('camSel');
+
+function cDist(a,b){let dr=a.r-b.r,dg=a.g-b.g,db=a.b-b.b;return dr*dr+dg*dg+db*db}
+function classify(r,g,b){let best=0,bd=1e9;for(let i=0;i<4;i++){let d=cDist(COLOURS[i],{r,g,b});if(d<bd){bd=d;best=i}}return best}
+function log(m){logEl.textContent=m;console.log(m)}
+
+/* ---- Camera enumeration ---- */
+async function enumCams(){
+  try{
+    devices=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    camSel.innerHTML='';
+    devices.forEach((d,i)=>{
+      let o=document.createElement('option');
+      o.value=d.deviceId;
+      o.textContent=d.label||'Camera '+(i+1);
+      camSel.appendChild(o);
+    });
+    if(devices.length>0){curDev=devices[0].deviceId;camSel.value=curDev}
+    status.textContent=devices.length+' camera(s) found';
+  }catch(e){status.textContent='Enum error: '+e.message}
+}
+
+async function startCam(deviceId){
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  status.textContent='Starting camera...';
+  let constraints={video:{facingMode:'environment'},audio:false};
+  if(deviceId)constraints.video={deviceId:{exact:deviceId}};
+  if(!deviceId){constraints.video.width={ideal:1280};constraints.video.height={ideal:720}}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject=stream;
+    await video.play();
+    status.textContent='Point camera at screen';
+    live=true;
+    requestAnimationFrame(loop);
+  }catch(e){
+    status.textContent='Camera error: '+e.message;
+    if(!deviceId){
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+        video.srcObject=stream;await video.play();
+        status.textContent='Camera OK (fallback)';
+        live=true;requestAnimationFrame(loop);
+      }catch(e2){status.textContent='Both camera attempts failed'}
+    }
+  }
+}
+
+window.switchCam=function(){
+  if(devices.length<2){status.textContent='Only one camera';return}
+  let idx=devices.findIndex(d=>d.deviceId===curDev);
+  idx=(idx+1)%devices.length;
+  curDev=devices[idx].deviceId;
+  camSel.value=curDev;
+  startCam(curDev);
 };
 
-// Target colours from the encoder (R,G,B)
-const COLOURS = [
-  { r:   0, g:   0, b:   0 },  // 00  black
-  { r: 210, g:   0, b:   0 },  // 01  red
-  { r:   0, g: 170, b:   0 },  // 10  green
-  { r:   0, g:   0, b: 230 },  // 11  blue
-];
+camSel.onchange=function(){curDev=camSel.value;startCam(curDev)};
 
-// ── state ────────────────────────────────────────────────────────────────
-let totalFrames = null;
-const received  = {};          // index → Uint8Array (payload only)
-let lastCapture = {};          // index → timestamp (cooldown)
-let stream     = null;
-let running    = false;
-let animId     = null;
-
-const video   = document.getElementById("cam");
-const overlay = document.getElementById("overlay");
-const octx    = overlay.getContext("2d");
-const status  = document.getElementById("status");
-const bar     = document.getElementById("bar");
-const frames  = document.getElementById("frames");
-const sz      = document.getElementById("sz");
-const dlBtn   = document.getElementById("dl");
-const logEl   = document.getElementById("log");
-
-// ── helpers ──────────────────────────────────────────────────────────────
-function colourDist(a, b) {
-  const dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
-  return dr*dr + dg*dg + db*db;
-}
-
-function classify(r, g, b) {
-  let best = 0, bestD = Infinity;
-  for (let i = 0; i < COLOURS.length; i++) {
-    const d = colourDist(COLOURS[i], {r,g,b});
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  return best;  // 0-3
-}
-
-function log(msg) {
-  logEl.textContent = msg;
-  console.log(msg);
-}
-
-function pad4(n) { return String(n).padStart(4, "0"); }
-
-// ── camera init ──────────────────────────────────────────────────────────
-async function startCamera() {
-  status.textContent = "Requesting camera…";
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false
-    });
-    video.srcObject = stream;
-    await video.play();
-    status.textContent = "Camera ready — point at the screen";
-    running = true;
-    requestAnimationFrame(loop);
-  } catch (e) {
-    status.textContent = "Camera error: " + e.message;
-  }
-}
-
-// ── grid detection ───────────────────────────────────────────────────────
-function findGridCorners(gray, w, h) {
-  // Simple approach: scan inward from edges to find the black border
-  const DARK = 60;
-
-  let left = 0, right = w - 1, top = 0, bottom = h - 1;
-
-  // Find left edge
-  for (let x = 0; x < w; x++) {
-    let darkCount = 0;
-    for (let y = Math.floor(h*0.3); y < Math.floor(h*0.7); y++) {
-      const i = (y * w + x) * 4;
-      if (gray[i] < DARK) darkCount++;
+/* ---- Improved grid detection ---- */
+function findGridCorners(pixels,w,h){
+  let sum=0,count=0;
+  for(let y=0;y<h;y+=2){
+    for(let x=0;x<w;x+=2){
+      let i=(y*w+x)*4;
+      sum+=pixels[i];count++;
     }
-    if (darkCount > (h * 0.35)) { left = x; break; }
   }
+  let avg=sum/count;
+  let DARK=Math.min(avg*0.4,80);
 
-  // Find right edge
-  for (let x = w - 1; x >= 0; x--) {
-    let darkCount = 0;
-    for (let y = Math.floor(h*0.3); y < Math.floor(h*0.7); y++) {
-      const i = (y * w + x) * 4;
-      if (gray[i] < DARK) darkCount++;
-    }
-    if (darkCount > (h * 0.35)) { right = x; break; }
+  let left=-1,right=-1,top=-1,bottom=-1;
+
+  for(let x=0;x<w;x++){
+    let dark=0,total=0;
+    for(let y=0;y<h;y++){let i=(y*w+x)*4;if(pixels[i]<DARK)dark++;total++}
+    if(dark>total*0.25){left=x;break}
   }
+  if(left<0)return null;
 
-  // Find top edge
-  for (let y = 0; y < h; y++) {
-    let darkCount = 0;
-    for (let x = Math.floor(w*0.3); x < Math.floor(w*0.7); x++) {
-      const i = (y * w + x) * 4;
-      if (gray[i] < DARK) darkCount++;
-    }
-    if (darkCount > (w * 0.35)) { top = y; break; }
+  for(let x=w-1;x>=0;x--){
+    let dark=0,total=0;
+    for(let y=0;y<h;y++){let i=(y*w+x)*4;if(pixels[i]<DARK)dark++;total++}
+    if(dark>total*0.25){right=x;break}
   }
+  if(right<0||right-left<40)return null;
 
-  // Find bottom edge
-  for (let y = h - 1; y >= 0; y--) {
-    let darkCount = 0;
-    for (let x = Math.floor(w*0.3); x < Math.floor(w*0.7); x++) {
-      const i = (y * w + x) * 4;
-      if (gray[i] < DARK) darkCount++;
-    }
-    if (darkCount > (w * 0.35)) { bottom = y; break; }
+  for(let y=0;y<h;y++){
+    let dark=0,total=0;
+    for(let x=left;x<=right;x++){let i=(y*w+x)*4;if(pixels[i]<DARK)dark++;total++}
+    if(dark>total*0.25){top=y;break}
   }
+  if(top<0)return null;
 
-  const gw = right - left, gh = bottom - top;
-  if (gw < 60 || gh < 60 || gw > w*0.95 || gh > h*0.95) return null; // too small/large
+  for(let y=h-1;y>=0;y--){
+    let dark=0,total=0;
+    for(let x=left;x<=right;x++){let i=(y*w+x)*4;if(pixels[i]<DARK)dark++;total++}
+    if(dark>total*0.25){bottom=y;break}
+  }
+  if(bottom<0||bottom-top<40)return null;
 
-  return { left, top, right, bottom, w: gw, h: gh };
-}
+  let gw=right-left,gh=bottom-top;
+  if(gw<40||gh<40||gw/gh>2||gh/gw>2)return null;
 
-// ── decode a single frame from pixel data ────────────────────────────────
-function decodeFrame(pixels, w, h) {
-  const corners = findGridCorners(pixels, w, h);
-  if (!corners) return null;
+  let cellPx=gw/C.CELLS;
+  if(cellPx<1.5)return null;
 
-  const { left, top, right, bottom } = corners;
-  const gw = right - left, gh = bottom - top;
-  const cellSize = gw / CFG.CELLS;  // approximate cell size in camera pixels
+  let finderCenters=[
+    {cx:left+2.5*cellPx,cy:top+2.5*cellPx},
+    {cx:left+30.5*cellPx,cy:top+2.5*cellPx},
+    {cx:left+2.5*cellPx,cy:top+30.5*cellPx},
+    {cx:left+30.5*cellPx,cy:top+30.5*cellPx},
+  ];
 
-  if (cellSize < 2) return null; // too small to sample reliably
-
-  const innerSide = CFG.CELLS - 2; // 31
-  const usable    = innerSide * innerSide - 4 * CFG.FINDER * CFG.FINDER; // 925
-  const byteCount = Math.floor(usable * 2 / 8); // 231
-
-  const bits = [];
-  const half = Math.floor(cellSize / 2);
-
-  for (let row = 1; row <= innerSide; row++) {
-    for (let col = 1; col <= innerSide; col++) {
-      // Skip finder cells
-      const isFinder =
-        (row <= CFG.FINDER && col <= CFG.FINDER) ||
-        (row <= CFG.FINDER && col > innerSide - CFG.FINDER) ||
-        (row > innerSide - CFG.FINDER && col <= CFG.FINDER) ||
-        (row > innerSide - CFG.FINDER && col > innerSide - CFG.FINDER);
-      if (isFinder) continue;
-
-      // Sample centre of cell
-      const cx = Math.round(left + (col + 0.5) * cellSize);
-      const cy = Math.round(top  + (row + 0.5) * cellSize);
-
-      if (cx < 0 || cx >= w || cy < 0 || cy >= h) {
-        bits.push(0); bits.push(0); continue;
+  let foundFinders=0;
+  for(let f of finderCenters){
+    let cx=Math.round(f.cx),cy=Math.round(f.cy);
+    if(cx<0||cx>=w||cy<0||cy>=h)continue;
+    let ci=(cy*w+cx)*4;
+    let cr=pixels[ci];
+    let ringDark=0,ringTotal=0;
+    let r=Math.round(cellPx*1.2);
+    for(let dy=-r;dy<=r;dy++){
+      for(let dx=-r;dx<=r;dx++){
+        if(Math.abs(dx)<r*0.3&&Math.abs(dy)<r*0.3)continue;
+        let sx=cx+dx,sy=cy+dy;
+        if(sx<0||sx>=w||sy<0||sy>=h)continue;
+        let si=(sy*w+sx)*4;
+        if(pixels[si]<DARK)ringDark++;
+        ringTotal++;
       }
+    }
+    if(cr>120&&ringTotal>0&&ringDark/ringTotal>0.4)foundFinders++;
+  }
 
-      const i = (cy * w + cx) * 4;
-      const r = pixels[i], g = pixels[i+1], b = pixels[i+2];
-      const val = classify(r, g, b);
+  if(foundFinders<3){log('Finders: '+foundFinders+'/4');return null}
+
+  return{left,top,right,bottom,w:gw,h:gh};
+}
+
+function decodeFrame(pixels,w,h){
+  let corners=findGridCorners(pixels,w,h);
+  if(!corners)return null;
+
+  let{left,top}=corners;
+  let gw=corners.right-left,gh=corners.bottom-top;
+  let cellSize=gw/C.CELLS;
+  if(cellSize<1.5)return null;
+
+  let innerSide=C.CELLS-2;
+  let usable=innerSide*innerSide-4*C.FINDER*C.FINDER;
+
+  let bits=[];
+  let halfC=Math.max(1,Math.floor(cellSize/4));
+
+  for(let row=1;row<=innerSide;row++){
+    for(let col=1;col<=innerSide;col++){
+      let isF=(row<=C.FINDER&&col<=C.FINDER)||
+              (row<=C.FINDER&&col>innerSide-C.FINDER)||
+              (row>innerSide-C.FINDER&&col<=C.FINDER)||
+              (row>innerSide-C.FINDER&&col>innerSide-C.FINDER);
+      if(isF)continue;
+
+      let cx=Math.round(left+(col+0.5)*cellSize);
+      let cy=Math.round(top+(row+0.5)*cellSize);
+      let sr=0,sg=0,sb=0,sc=0;
+      for(let dy=-halfC;dy<=halfC;dy++){
+        for(let dx=-halfC;dx<=halfC;dx++){
+          let sx=cx+dx,sy=cy+dy;
+          if(sx<0||sx>=w||sy<0||sy>=h)continue;
+          let i=(sy*w+sx)*4;
+          sr+=pixels[i];sg+=pixels[i+1];sb+=pixels[i+2];sc++;
+        }
+      }
+      if(sc===0){bits.push(0);continue}
+      let val=classify(Math.round(sr/sc),Math.round(sg/sc),Math.round(sb/sc));
       bits.push(val);
     }
   }
 
-  // Convert 2-bit values to bytes
-  const bytes = new Uint8Array(byteCount);
-  for (let i = 0; i < Math.min(bits.length, byteCount * 4); i += 4) {
-    const b0 = bits[i] || 0, b1 = bits[i+1] || 0, b2 = bits[i+2] || 0, b3 = bits[i+3] || 0;
-    bytes[Math.floor(i/4)] = (b0 << 6) | (b1 << 4) | (b2 << 2) | b3;
+  let bytes=new Uint8Array(C.CAP);
+  for(let i=0;i<Math.min(bits.length,C.CAP*4);i+=4){
+    let b0=bits[i]||0,b1=bits[i+1]||0,b2=bits[i+2]||0,b3=bits[i+3]||0;
+    bytes[i>>2]=(b0<<6)|(b1<<4)|(b2<<2)|b3;
   }
 
-  // Read header: index (uint16 BE) + total (uint16 BE)
-  const idx   = (bytes[0] << 8) | bytes[1];
-  const total = (bytes[2] << 8) | bytes[3];
+  let idx=(bytes[0]<<8)|bytes[1];
+  let total=(bytes[2]<<8)|bytes[3];
+  if(idx>=total||total<1||total>9999)return null;
 
-  // Validate
-  if (idx >= total || total > 9999 || total < 1) return null;
-
-  // Payload = bytes[4..]
-  const payload = bytes.slice(4);
-
-  return { index: idx, total, payload };
+  return{index:idx,total,payload:bytes.slice(4)};
 }
 
-// ── reassemble file ──────────────────────────────────────────────────────
-function reassemble() {
-  const N = totalFrames;
-  if (N === null) return;
-
-  // Concatenate payloads in order
-  const parts = [];
-  for (let i = 0; i < N; i++) {
-    if (!received[i]) return; // missing frame
-    parts.push(received[i]);
-  }
-
-  // Concatenate
-  let totalLen = 0;
-  for (const p of parts) totalLen += p.length;
-  const merged = new Uint8Array(totalLen);
-  let off = 0;
-  for (const p of parts) {
-    merged.set(p, off);
-    off += p.length;
-  }
-
-  // Parse session header
-  // byte 0: magic (0xAB), byte 1: version (0x01)
-  if (merged[0] !== 0xAB || merged[1] !== 0x01) {
-    status.textContent = "Bad session header — wrong magic";
-    return null;
-  }
-  const nameLen = (merged[2] << 8) | merged[3];
-  const nameBytes = merged.slice(4, 4 + nameLen);
-  const filename = new TextDecoder().decode(nameBytes);
-
-  // Decompress the rest with pako
-  const compressed = merged.slice(4 + nameLen);
+/* ---- Reassembly ---- */
+function reassemble(){
+  if(totalF===null)return null;
+  let N=totalF,parts=[];
+  for(let i=0;i<N;i++){if(!rx[i])return null;parts.push(rx[i])}
+  let tLen=0;for(let p of parts)tLen+=p.length;
+  let merged=new Uint8Array(tLen),off=0;
+  for(let p of parts){merged.set(p,off);off+=p.length}
+  if(merged[0]!==0xAB||merged[1]!==0x01){status.textContent='Bad session header';return null}
+  let nameLen=(merged[2]<<8)|merged[3];
+  let fname=new TextDecoder().decode(merged.slice(4,4+nameLen));
   let raw;
-  try {
-    raw = pako.inflate(compressed);
-  } catch (e) {
-    status.textContent = "Decompress error: " + e.message;
-    return null;
-  }
-
-  return { filename, data: raw };
+  try{raw=pako.inflate(merged.slice(4+nameLen))}
+  catch(e){status.textContent='Decompress error: '+e.message;return null}
+  return{filename:fname,data:raw};
 }
 
-function triggerDownload(file) {
-  const blob = new Blob([file.data], { type: "application/octet-stream" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
-  a.download = file.filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  status.textContent = `Downloaded: ${file.filename} (${file.data.length} bytes)`;
+function dlFile(file){
+  let blob=new Blob([file.data],{type:'application/octet-stream'});
+  let url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=file.filename;document.body.appendChild(a);
+  a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  status.textContent='Downloaded: '+file.filename+' ('+file.data.length+'B)';
 }
 
-// ── main loop ────────────────────────────────────────────────────────────
-let lastScan = 0;
+/* ---- Main loop ---- */
+let lastScan=0;
+function loop(ts){
+  if(!live)return;
+  rid=requestAnimationFrame(loop);
+  if(ts-lastScan<C.SCAN_MS)return;
+  lastScan=ts;
 
-function loop(ts) {
-  if (!running) return;
-  animId = requestAnimationFrame(loop);
+  let vw=video.videoWidth,vh=video.videoHeight;
+  if(!vw||!vh)return;
+  overlay.width=vw;overlay.height=vh;
 
-  if (ts - lastScan < CFG.SCAN_EVERY) return;
-  lastScan = ts;
+  octx.drawImage(video,0,0,vw,vh);
+  let img=octx.getImageData(0,0,vw,vh);
+  let pix=img.data;
 
-  // Resize processing canvas to match video
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) return;
-  overlay.width  = vw;
-  overlay.height = vh;
+  let result=decodeFrame(pix,vw,vh);
 
-  // Draw video frame to canvas
-  octx.drawImage(video, 0, 0, vw, vh);
-  const imgData = octx.getImageData(0, 0, vw, vh);
-  const pixels  = imgData.data;
-
-  const result = decodeFrame(pixels, vw, vh);
-
-  // Draw overlay
-  octx.strokeStyle = result ? "#0f0" : "#f44";
-  octx.lineWidth = 3;
-  const corners = findGridCorners(pixels, vw, vh);
-  if (corners) {
-    octx.strokeRect(corners.left, corners.top,
-                     corners.right - corners.left, corners.bottom - corners.top);
+  let corners=findGridCorners(pix,vw,vh);
+  if(corners){
+    octx.strokeStyle=result?'#0f0':'#f84';
+    octx.lineWidth=3;
+    octx.strokeRect(corners.left,corners.top,corners.right-corners.left,corners.bottom-corners.top);
   }
 
-  if (!result) return;
+  if(!result)return;
+  let{index,total,payload}=result;
 
-  const { index, total, payload } = result;
+  if(totalF===null){totalF=total;status.textContent='Grid: '+total+' frame(s)'}
+  else if(totalF!==total)return;
 
-  // Init or validate total
-  if (totalFrames === null) {
-    totalFrames = total;
-    status.textContent = `Detected: ${total} frame(s)`;
-  } else if (totalFrames !== total) {
-    // total mismatch — maybe a different transfer, ignore
-    return;
-  }
+  let now=Date.now();
+  if(lastCap[index]&&now-lastCap[index]<C.COOL_MS)return;
+  lastCap[index]=now;
+  rx[index]=payload;
 
-  // Cooldown check
-  const now = Date.now();
-  if (lastCapture[index] && now - lastCapture[index] < CFG.COOLDOWN) return;
-  lastCapture[index] = now;
+  let got=Object.keys(rx).length;
+  let pct=Math.round(got/totalF*100);
+  bar.style.width=pct+'%';
+  framesE.textContent=got+'/'+totalF;
+  szE.textContent='~'+Math.round(Object.values(rx).reduce((a,b)=>a+b.length,0)/1024)+'KB';
+  status.textContent='Frame '+(index+1)+' of '+totalF;
 
-  // Store
-  received[index] = payload;
-
-  // Update progress
-  const got = Object.keys(received).length;
-  const pct = Math.round((got / totalFrames) * 100);
-  bar.style.width = pct + "%";
-  frames.textContent = `${got} / ${totalFrames}`;
-  sz.textContent = `${Math.round(Object.values(received).reduce((a,b)=>a+b.length,0)/1024)} KB`;
-  status.textContent = `Captured frame ${index + 1} of ${totalFrames}`;
-
-  if (got >= totalFrames) {
-    status.textContent = "All frames captured — reassembling…";
-    running = false;
-    cancelAnimationFrame(animId);
-    if (stream) { stream.getTracks().forEach(t => t.stop()); }
-
-    const file = reassemble();
-    if (file) {
-      dlBtn.disabled = false;
-      dlBtn.textContent = `Download ${file.filename} (${file.data.length} bytes)`;
-      dlBtn.onclick = () => triggerDownload(file);
-      status.textContent = "Ready! Tap Download.";
-      // Vibrate to notify
-      if (navigator.vibrate) navigator.vibrate([200,100,200]);
+  if(got>=totalF){
+    status.textContent='Reassembling...';
+    live=false;cancelAnimationFrame(rid);
+    if(stream){stream.getTracks().forEach(t=>t.stop())}
+    let file=reassemble();
+    if(file){
+      dlBtn.disabled=false;dlBtn.className='btn btn-on';
+      dlBtn.textContent='Download '+file.filename+' ('+file.data.length+'B)';
+      dlBtn.onclick=()=>dlFile(file);
+      status.textContent='Ready! Tap Download';
+      if(navigator.vibrate)navigator.vibrate([200,100,200]);
     }
   }
 }
 
-// ── start ────────────────────────────────────────────────────────────────
-dlBtn.onclick = () => {
-  const file = reassemble();
-  if (file) triggerDownload(file);
-};
+/* ---- Init ---- */
+enumCams().then(()=>startCam(curDev));
 
-startCamera();
+</script>
 </script>
 </body>
 </html>
