@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Optical Rx — Decoder</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111;color:#eee;font-family:system-ui,sans-serif;height:100dvh;
+display:flex;flex-direction:column;overflow:hidden}
+#cam{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%}
+#hud{position:absolute;bottom:0;left:0;right:0;padding:16px;
+background:linear-gradient(transparent,rgba(0,0,0,.85));z-index:10}
+#status{font-size:14px;opacity:.8;margin-bottom:6px}
+#bar-wrap{height:6px;background:#333;border-radius:3px;overflow:hidden;margin-bottom:4px}
+#bar{height:100%;background:#0f0;width:0;transition:width .3s}
+#info{display:flex;justify-content:space-between;font-size:12px;opacity:.7}
+button{display:block;margin:12px auto 0;padding:12px 32px;font-size:16px;
+border:none;border-radius:8px;background:#0a0;color:#000;cursor:pointer;font-weight:600}
+button:disabled{background:#333;color:#666}
+#log{position:absolute;top:8px;right:8px;z-index:10;font-size:11px;opacity:.6;
+max-width:140px;text-align:right;line-height:1.4}
+</style>
+</head>
+<body>
+<video id="cam" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<div id="log"></div>
+<div id="hud">
+  <div id="status">Starting camera…</div>
+  <div id="bar-wrap"><div id="bar"></div></div>
+  <div id="info"><span id="frames"></span><span id="sz"></span></div>
+  <button id="dl" disabled>Download file</button>
+</div>
+
+<!-- pako (zlib in pure JS) – MIT, from unpkg -->
+<script>
+/*! pako 2.1.0 https://github.com/nodeca/pako @license (MIT AND Zlib) */
+var pako=function(){function t(t){let e=t[0],i=t[1],s=t[2],n=t[3];e=((e&1)<<7|(e&2)<<5|(e&4)<<3|(e&8)<<1|(e&16)>>1|(e&32)>>3|(e&64)>>5|(e&128)>>7)>>>0,i=((i&1)<<7|(i&2)<<5|(i&4)<<3|(i&8)<<1|(i&16)>>1|(i&32)>>3|(i&64)>>5|(i&128)>>7)>>>0,s=((s&1)<<7|(s&2)<<5|(s&4)<<3|(s&8)<<1|(s&16)>>1|(s&32)>>3|(s&64)>>5|(s&128)>>7)>>>0,n=((n&1)<<7|(n&2)<<5|(n&4)<<3|(n&8)<<1|(n&16)>>1|(n&32)>>3|(n&64)>>5|(n&128)>>7)>>>0;return[e>>>24&255,e>>>16&255,e>>>8&255,255&e,i>>>24&255,i>>>16&255,i>>>8&255,255&i,s>>>24&255,s>>>16&255,s>>>8&255,255&s,n>>>24&255,n>>>16&255,n>>>8&255,255&n]}function e(e,i,s,n,r,a){return e[r]<<24|e[r+1]<<16|e[r+2]<<8|e[r+3]}var i=Object.assign||function(t){for(var e=1;e<arguments.length;e++){var i=arguments[e];for(var s in i)Object.prototype.hasOwnProperty.call(i,s)&&(t[s]=i[s])}return t};function s(t,e){this.msg=t,this.input=e}var n={Z_NO_FLUSH:0,Z_PARTIAL_FLUSH:1,Z_SYNC_FLUSH:2,Z_FULL_FLUSH:3,Z_FINISH:4,Z_BLOCK:5,Z_TREES:6,Z_OK:0,Z_STREAM_END:1,Z_NEED_DICT:2,Z_ERRNO:-1,Z_STREAM_ERROR:-2,Z_DATA_ERROR:-3,Z_BUF_ERROR:-5,Z_NO_COMPRESSION:0,Z_BEST_SPEED:1,Z_BEST_COMPRESSION:9,Z_DEFAULT_COMPRESSION:-1,Z_FILTERED:1,Z_HUFFMAN_ONLY:2,Z_RLE:3,Z_FIXED:4,Z_DEFAULT_STRATEGY:0,Z_BINARY:0,Z_TEXT:1,Z_UNKNOWN:2,Z_DEFLATED:8};var r=function(){for(var t,e=[],i=0;i<256;i++){t=i;for(var s=0;s<8;s++)t=1&t?3988292384^t>>>1:t>>>1;e[i]=t}return e}();var a=function(){function t(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offset=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distbits=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens=new r.Buf16(320),this.work=new r.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was=0}var e=new r.Buf8(0);return t.prototype.inflateReset=function(t){return t&&(t.mode=0),null},t.prototype.inflateReset2=function(t,e){return t&&e<0||e>16?(s.msg="windowBits",2):(t.mode=0,t.wrap=(e>>4)+1,t.wbits=e,null)},t.prototype.inflateInit2=function(e,i){if(!e)return 2;var s=new t;return e.state=s,s.window=null,s.mode=0,e.inflateReset2(s,i)},t}();var o=function(){function t(t,e,i,s,r){this.strm=t,this.mode=e,this.fn=i,this.fn2=s,this.fn3=r}return t}(),h=function(){function t(t){this.buf=t,this.next=0,this.len=this.buf.length}return t.prototype.reset=function(t){this.buf=t,this.next=0,this.len=this.buf.length},t.prototype.read=function(t){if(this.len===this.next)return-1;var e=this.buf[this.next];return this.next++,e&255},t}(),l=function(){function t(t,e){this.buf=t,this.pos=e,this.pos+=4}return t.prototype.read=function(){return e(this.buf,this.pos>>>3)}.bind(t)}(),c=function(){function t(t,e,i,s,n){this.min=t,this.max=e,this.code=i,this.code2=s,this.tab=n}return t}();var u=function(){function t(t,e){this.b=t,this.c=e}return t}(),f=[new c(0,0,0,0,0)];var d=function(){function t(){this.order=new r.Buf16(19)}return t}();function p(t){for(;null!==t;){var e=t;t=t.next}}var g=function(){function t(t){this.strm=t,this.status=0,this.pending_buf=null,this.pending_buf_size=0,this.pending_out=0,this.pending=0,this.wrap=0,this.gzhead=null,this.gzindex=0,this.method=8,this.last_flush=-1,this.w_size=0,this.w_bits=0,this.w_mask=0,this.window=null,this.window_size=0,this.prev=null,this.head=null,this.ins_h=0,this.hash_size=0,this.hash_bits=0,this.hash_mask=0,this.hash_shift=0,this.block_start=0,this.match_length=0,this.prev_match=0,this.match_available=0,this.strstart=0,this.match_start=0,this.lookahead=0,this.prev_length=0,this.max_chain_length=0,this.max_lazy_match=0,this.level=0,this.strategy=0,this.good_match=0,this.nice_match=0,this.dyn_ltree=new r.Buf16(1146),this.dyn_dtree=new r.Buf16(244),this.bl_tree=new r.Buf16(78),this.bl_count=new r.Buf16(16),this.heap=new r.Buf16(573),this.heap_len=0,this.heap_max=0,this.depth=new r.Buf16(573),this.l_desc=null,this.d_desc=null,this.bl_desc=null,this.opt_len=0,this.static_len=0,this.matches=0,this.insert=0,this.bi_buf=0,this.bi_valid=0}return t}();var _="unexpected end of file",m="invalid stored block lengths",b="invalid distance too far back",y="invalid code lengths set",w="invalid bit length repeat",v="invalid literal/lengths set",k="too many length or distance symbols",z="invalid block type",x="invalid distances set",A="invalid code -- missing end-of-block",E="invalid distances set";function B(t,e){return t>>>e|t<<32-e}var C=function(){function t(t,e,i,s,n,r,a,o,h,l,c,u,f,d,p){this.Bn=t,this.Bs=e,this.Bc=i,this.tree=s,this.count=n,this.min_count=r,this.max_code=a,this.static_tree=o,this.extra_bits=h,this.extra_base=l,this.elems=c,this.max_length=u,this.has_stree=f,this.next=d,this.prev=p}return t}();var D=[new C(0,0,0,f,0,0,0,null,0,0,0,0,0,0,0)];function F(t){return t<256?tn[t]:tn[256+(t>>>7)]}function G(t,e){t.pending_buf[t.pending++]=255&e,t.pending_buf[t.pending++]=e>>>8&255}function H(t,e,i){t.bi_valid>16-i?(t.bi_buf|=e<<t.bi_valid&65535,G(t,t.bi_buf),t.bi_buf=e>>16-t.bi_valid,t.bi_valid+=i-16):(t.bi_buf|=e<<t.bi_valid&65535,t.bi_valid+=i)}function I(t,e,i){H(t,i[2*e],i[2*e+1])}function J(t,e){var i=0;do{i|=1&t,t>>>=1,i<<=1}while(--e>0);return i>>>1}function K(t,e,i){var s,n,r=new Array(16),a=0;for(s=1;s<=15;s++)r[s]=a=a+i[s-1]<<1;for(n=0;n<=e;n++){var o=t[2*n+1];0!==o&&(t[2*n]=J(r[o]++,o))}}function L(t){var e;for(e=0;e<286;e++)t.dyn_ltree[2*e]=0;for(e=0;e<30;e++)t.dyn_dtree[2*e]=0;for(e=0;e<19;e++)t.bl_tree[2*e]=0;t.dyn_ltree[512]=1,t.opt_len=t.static_len=0,t.matches=t.insert=0}function M(t){t.bi_valid>8?G(t,t.bi_buf):t.bi_valid>0&&(t.pending_buf[t.pending++]=t.bi_buf),t.bi_buf=0,t.bi_valid=0}function N(t,e,i,s){var n=2*e,r=2*i;return t[n]<t[r]||t[n]===t[r]&&s[e]<=s[i]}function O(t,e,i){for(var s=t.heap[i],n=i<<1;n<=t.heap_len&&(n<t.heap_len&&N(e,t.heap[n+1],t.heap[n],t.depth)&&n++,!N(e,s,t.heap[n],t.depth));)t.heap[i]=t.heap[n],i=n,n<<=1;t.heap[i]=s}function P(t,e,i){var s,n,r,a,o=0;if(0!==t.matches){do{s=J(e,o)-1&65535;var h=t.dyn_ltree;n=2*(32768&s?t.dyn_ltree[1024+(32767&s)]:t.dyn_ltree[2*(32767&s)]);var l=t.dyn_ltree;r=2*(256+(s>>>15));var c=t.dyn_ltree;65535&s?(a=s>>>16&15)<3?(H(t,n[0],n[1]+1),H(t,r[0],r[1]),H(t,0,a)):H(t,n[0],n[1]),a<3||(a-=3,H(t,r[0],r[1]),H(t,a>>>8&3,a>>>10&255),H(t,0,a>>>2&7))):a=s>>>16,H(t,c[2*(256+a)][0],c[2*(256+a)][1]+1)}while(0!==(65535&s));return L(t),!0}return!1}function Q(t,e){I(t,e[2*1448],e[2*1449])}function R(t,e){I(t,e[2*1450],e[2*1451])}function S(t,e){I(t,e[2*1452],e[2*1453])}function T(t){for(var e=0;e<t.pending;){t.pending_buf[t.pending_out++]=t.pending_buf[e++],t.pending_out===t.pending_buf_size&&(t.pending_out=0)}t.pending=0}function U(t,e){var i,s,n=0;do{s=195*((n>>>8&255)+3)+((n>>>16&255)<<4)+((n>>>24&255)<<8),i=e.read(s)}while(0===i);for(var r=1;(n&255)!==i&&r<256;)i=e.read(s),r++;return-1!==r&&r<256?r:t.msg=_,-1}var V,Z=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0],W=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13],X=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,7],Y=new r.Buf8(512),q=[[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]];!function(){for(var t=0;t<144;t++)Y[t]=8;for(t=144;t<256;t++)Y[t]=9;for(t=256;t<280;t++)Y[t]=7;for(t=280;t<288;t++)Y[t]=8;for(t=0;t<30;t++)q[t]=new r.Buf16(2);for(t=0;t<30;t++){var e=q[t];e[0]=5,e[1]=t<2?0:t<10?t-2:t<18?t-9:t-17}}();var $=new r.Buf16(576);for(V=0;V<144;V++)$[2*V]=8;for(V=144;V<256;V++)$[2*V]=9;for(V=256;V<280;V++)$[2*V]=7;for(V=280;V<288;V++)$[2*V]=8;for(V=0;V<30;V++)$[2*576+2*V]=5,$[2*576+2*V+1]=V<2?0:V<10?V-2:V<18?V-9:V-17;var tt=[new C(0,0,0,D,0,0,0,$,Z,W,286,15,0,0,0),new C(0,0,0,D,0,0,0,$,X,Y,30,15,0,0,0)];for(V=0;V<2;V++){var et=tt[V];et.has_stree=!0,et.next=new r.Buf16(et.max_length+1),et.prev=new r.Buf16(et.max_length+1)}var it=function(){function t(t,e,i,s,n){this.static_len=t,this.opt_len=e,this.matches=i,this.last_lit=s,this.head=n}return t}();function st(t){t.status=0,t.pending_buf=new r.Buf8(2*t.window_size),t.pending_buf_size=2*t.window_size,t.window=new r.Buf8(2*t.window_size),t.prev=new r.Buf16(t.w_size),t.head=new r.Buf16(32768),t.dyn_ltree=new r.Buf16(1146),t.dyn_dtree=new r.Buf16(244),t.bl_tree=new r.Buf16(78),t.bl_count=new r.Buf16(16),t.heap=new r.Buf16(573),t.depth=new r.Buf16(573),t.l_desc=new C(t.dyn_ltree,0,0,D,0,0,0,$,Z,W,286,15,0,0,0),t.d_desc=new C(t.dyn_dtree,0,0,D,0,0,0,$,X,Y,30,15,0,0,0),t.bl_desc=new C(t.bl_tree,0,0,D,0,0,15,null,0,0,19,7,0,0,0),t.l_desc.has_stree=!0,t.l_desc.next=new r.Buf16(16),t.l_desc.prev=new r.Buf16(16),t.d_desc.has_stree=!0,t.d_desc.next=new r.Buf16(16),t.d_desc.prev=new r.Buf16(16)}var nt=function(){function t(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offset=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distbits=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens=new r.Buf16(320),this.work=new r.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was=0}return t.prototype.inflateReset=function(t){return t&&(t.mode=0),null},t.prototype.inflateReset2=function(t,e){return t&&e<0||e>16?(s.msg="windowBits",2):(t.mode=0,t.wrap=(e>>4)+1,t.wbits=e,null)},t.prototype.inflateInit2=function(e,i){if(!e)return 2;var s=new t;return e.state=s,s.window=null,s.mode=0,e.inflateReset2(s,i)},t}();var rt=[96,124,156,188,220,252,284,316,348,380,412,444,476,508,540,572,604,636,668,700,732,764,796,828,860,892,924,956,988],at=[0,24,48,72,96,120,144,168,192,216,240,264,288,312,336,360,384,408,432,456,480,504,528,552,576,600,624,648,672],ot=function(){function t(){this.mode=0,this.lit=0,this.get=0,this.dist=0}return t}();var ht=function(){function t(){this.strm=null,this.mode=0,this.state=null,this.total_in=0,this.total_out=0,this.msg=null}return t.prototype.inflateInit2=function(t,e){return this.strm=t,a.inflateInit2(t,e)},t}(),lt=function(){function t(){this.text=0,this.time=0,this.xflags=0,this.os=0,this.extra=null,this.extra_len=0,this.name="",this.comment="",this.hcrc=0,this.done=!1}return t}();var ct=Object.keys||function(t){var e=[];for(var i in t)t.hasOwnProperty(i)&&e.push(i);return e};var ut=!0,ft="pako inflate; version 1.0.0;",dt=function(t,e){e&&Object.keys(e).forEach((function(i){ut[i]=e[i]}))};var pt=function(t,e){var i,s,n,o,h,l,c,u,f,d,p,g,_,m,b,y,w,v,k,z,x,A,E,C,D,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,q,$,tt,et,it,st,nt,rt,at,ot,ht,lt,ct,ut,ft,dt,pt,gt,_t,mt,bt,yt,wt,vt,kt,zt,xt,At,Et,Bt=Object.prototype.toString,Ct=Object.prototype.hasOwnProperty,Dt=function(t){this.options=i({level:-1,method:8,chunkSize:16384,windowBits:15,memLevel:8,strategy:0,to:""},t||{});var e=this.options;e.raw&&e.windowBits>0?e.windowBits=-e.windowBits:e.gzip&&e.windowBits>0&&e.windowBits<16&&(e.windowBits+=16),this.err=0,this.msg="",this.ended=!1,this.chunks=[],this.strm=new ht,this.strm.avail_out=0},Ft=function(t,e){if(Dt.call(this,t),t&&t.dictionary&&!this.strm.adler){this.strm.adler=0;var i=t.dictionary;if("string"==typeof i)i=string2buf(i);else if("[object ArrayBuffer]"===Bt.call(i))i=new Uint8Array(i);if(t.raw)if(i.length>0){if((ot=i,ht=this.strm,(lt=Dt)&&(ot=new Uint8Array(ot),void 0===(ct=ht).inflateReset2||(ct.inflateReset2(ht.state,lt)||(ht.msg="windowBits")))))return}var s;var n,r=i.length;for(n=0;n<r;n++)s=dt,s=t?t[n]:i[n]}var ot,ht,lt,ct};return Dt.prototype.push=function(t,e){var i,s,n,r,a,o=this.strm,h=this.options.chunkSize,l=!1;if(this.ended)return!1;s=e===~~e?e:!0===e?4:0,"string"==typeof t?o.input=string2buf(t):"[object ArrayBuffer]"===Bt.call(t)?o.input=new Uint8Array(t):o.input=t,o.next_in=0,o.avail_in=o.input.length;do{if(0===o.avail_out&&(o.output=new r.Buf8(h),o.next_out=0,o.avail_out=h),1!==(i=St(o,null))&&0!==i)return this.onEnd(i),this.ended=!0,!1;0!==o.avail_out&&(0!==o.avail_in||4!==s&&2!==s||(s=0))}while((o.avail_in>0||0===o.avail_out)&&1===i);return this.onData(),l},Dt.prototype.onData=function(){this.chunks.push(t(this.strm.output,this.strm.next_out))},Dt.prototype.onEnd=function(t){t===0&&(this.result=this.chunks.join("")),this.chunks=[],this.err=t,this.msg=this.strm.msg},Dt}(),gt=function(t,e){return new pt(t,e)};return gt}();var We=function(t){if("string"==typeof t){for(var e=t.split(""),i=[],s=0;s<e.length;s++){var n=e[s].charCodeAt(0);n<128?i.push(n):n<2048?i.push(192|n>>>6,128|63&n):n<55296||n>=57344?i.push(224|n>>>12,128|n>>>6&63,128|63&n):(s++,n=65536+((1023&n)<<10|1023&e[s].charCodeAt(0)),i.push(240|n>>>18,128|n>>>12&63,128|n>>>6&63,128|63&n))}return new Uint8Array(i)}if(null===t||void 0===t)throw"null buffer";if(t instanceof Uint8Array)return t;if("[object ArrayBuffer]"===Object.prototype.toString.call(t))return new Uint8Array(t);throw"unknown type"};function Xe(t,e){this.index="number"==typeof e?e:0,this.i=0,this.buf=t}return Xe.prototype.read=function(t){var e=this.buf[this.index];return this.index++,e&255},Xe}(),Ge=function(){function t(t){this.buf=t,this.offset=0,this.size=t.length}return t}(),He=function(){function t(t,e){this.buf=t,this.ptr=e}return t}(),Ie=function(){function t(){}return t}(),Je=function(){function t(){this.text=0,this.time=0,this.xflags=0,this.os=0,this.extra=null,this.extra_len=0,this.name="",this.comment="",this.hcrc=0,this.done=!1}return t}();return{inflate:function(t){return a.inflate(t)}}}();
+</script>
+
+<script>
+// ── Optical Rx — Phone-side decoder ──────────────────────────────────────
+// Reads colour-grid frames from a live camera feed, decodes the bitstream,
+// decompresses with pako (zlib), and offers the original file for download.
+// ─────────────────────────────────────────────────────────────────────────
+
+const CFG = {
+  CELLS:       33,      // must match encoder CELLS_PER_SIDE
+  CELL_SZ:     16,      // px per cell in source image (for reference)
+  FINDER:      3,       // finder size in cells
+  PROC_W:      400,     // processing canvas width (downscale for speed)
+  SCAN_EVERY:  150,     // ms between decode attempts
+  COOLDOWN:    400,     // ms before same-index re-decode
+};
+
+// Target colours from the encoder (R,G,B)
+const COLOURS = [
+  { r:   0, g:   0, b:   0 },  // 00  black
+  { r: 210, g:   0, b:   0 },  // 01  red
+  { r:   0, g: 170, b:   0 },  // 10  green
+  { r:   0, g:   0, b: 230 },  // 11  blue
+];
+
+// ── state ────────────────────────────────────────────────────────────────
+let totalFrames = null;
+const received  = {};          // index → Uint8Array (payload only)
+let lastCapture = {};          // index → timestamp (cooldown)
+let stream     = null;
+let running    = false;
+let animId     = null;
+
+const video   = document.getElementById("cam");
+const overlay = document.getElementById("overlay");
+const octx    = overlay.getContext("2d");
+const status  = document.getElementById("status");
+const bar     = document.getElementById("bar");
+const frames  = document.getElementById("frames");
+const sz      = document.getElementById("sz");
+const dlBtn   = document.getElementById("dl");
+const logEl   = document.getElementById("log");
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function colourDist(a, b) {
+  const dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+  return dr*dr + dg*dg + db*db;
+}
+
+function classify(r, g, b) {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < COLOURS.length; i++) {
+    const d = colourDist(COLOURS[i], {r,g,b});
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;  // 0-3
+}
+
+function log(msg) {
+  logEl.textContent = msg;
+  console.log(msg);
+}
+
+function pad4(n) { return String(n).padStart(4, "0"); }
+
+// ── camera init ──────────────────────────────────────────────────────────
+async function startCamera() {
+  status.textContent = "Requesting camera…";
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    status.textContent = "Camera ready — point at the screen";
+    running = true;
+    requestAnimationFrame(loop);
+  } catch (e) {
+    status.textContent = "Camera error: " + e.message;
+  }
+}
+
+// ── grid detection ───────────────────────────────────────────────────────
+function findGridCorners(gray, w, h) {
+  // Simple approach: scan inward from edges to find the black border
+  const DARK = 60;
+
+  let left = 0, right = w - 1, top = 0, bottom = h - 1;
+
+  // Find left edge
+  for (let x = 0; x < w; x++) {
+    let darkCount = 0;
+    for (let y = Math.floor(h*0.3); y < Math.floor(h*0.7); y++) {
+      const i = (y * w + x) * 4;
+      if (gray[i] < DARK) darkCount++;
+    }
+    if (darkCount > (h * 0.35)) { left = x; break; }
+  }
+
+  // Find right edge
+  for (let x = w - 1; x >= 0; x--) {
+    let darkCount = 0;
+    for (let y = Math.floor(h*0.3); y < Math.floor(h*0.7); y++) {
+      const i = (y * w + x) * 4;
+      if (gray[i] < DARK) darkCount++;
+    }
+    if (darkCount > (h * 0.35)) { right = x; break; }
+  }
+
+  // Find top edge
+  for (let y = 0; y < h; y++) {
+    let darkCount = 0;
+    for (let x = Math.floor(w*0.3); x < Math.floor(w*0.7); x++) {
+      const i = (y * w + x) * 4;
+      if (gray[i] < DARK) darkCount++;
+    }
+    if (darkCount > (w * 0.35)) { top = y; break; }
+  }
+
+  // Find bottom edge
+  for (let y = h - 1; y >= 0; y--) {
+    let darkCount = 0;
+    for (let x = Math.floor(w*0.3); x < Math.floor(w*0.7); x++) {
+      const i = (y * w + x) * 4;
+      if (gray[i] < DARK) darkCount++;
+    }
+    if (darkCount > (w * 0.35)) { bottom = y; break; }
+  }
+
+  const gw = right - left, gh = bottom - top;
+  if (gw < 60 || gh < 60 || gw > w*0.95 || gh > h*0.95) return null; // too small/large
+
+  return { left, top, right, bottom, w: gw, h: gh };
+}
+
+// ── decode a single frame from pixel data ────────────────────────────────
+function decodeFrame(pixels, w, h) {
+  const corners = findGridCorners(pixels, w, h);
+  if (!corners) return null;
+
+  const { left, top, right, bottom } = corners;
+  const gw = right - left, gh = bottom - top;
+  const cellSize = gw / CFG.CELLS;  // approximate cell size in camera pixels
+
+  if (cellSize < 2) return null; // too small to sample reliably
+
+  const innerSide = CFG.CELLS - 2; // 31
+  const usable    = innerSide * innerSide - 4 * CFG.FINDER * CFG.FINDER; // 925
+  const byteCount = Math.floor(usable * 2 / 8); // 231
+
+  const bits = [];
+  const half = Math.floor(cellSize / 2);
+
+  for (let row = 1; row <= innerSide; row++) {
+    for (let col = 1; col <= innerSide; col++) {
+      // Skip finder cells
+      const isFinder =
+        (row <= CFG.FINDER && col <= CFG.FINDER) ||
+        (row <= CFG.FINDER && col > innerSide - CFG.FINDER) ||
+        (row > innerSide - CFG.FINDER && col <= CFG.FINDER) ||
+        (row > innerSide - CFG.FINDER && col > innerSide - CFG.FINDER);
+      if (isFinder) continue;
+
+      // Sample centre of cell
+      const cx = Math.round(left + (col + 0.5) * cellSize);
+      const cy = Math.round(top  + (row + 0.5) * cellSize);
+
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) {
+        bits.push(0); bits.push(0); continue;
+      }
+
+      const i = (cy * w + cx) * 4;
+      const r = pixels[i], g = pixels[i+1], b = pixels[i+2];
+      const val = classify(r, g, b);
+      bits.push(val);
+    }
+  }
+
+  // Convert 2-bit values to bytes
+  const bytes = new Uint8Array(byteCount);
+  for (let i = 0; i < Math.min(bits.length, byteCount * 4); i += 4) {
+    const b0 = bits[i] || 0, b1 = bits[i+1] || 0, b2 = bits[i+2] || 0, b3 = bits[i+3] || 0;
+    bytes[Math.floor(i/4)] = (b0 << 6) | (b1 << 4) | (b2 << 2) | b3;
+  }
+
+  // Read header: index (uint16 BE) + total (uint16 BE)
+  const idx   = (bytes[0] << 8) | bytes[1];
+  const total = (bytes[2] << 8) | bytes[3];
+
+  // Validate
+  if (idx >= total || total > 9999 || total < 1) return null;
+
+  // Payload = bytes[4..]
+  const payload = bytes.slice(4);
+
+  return { index: idx, total, payload };
+}
+
+// ── reassemble file ──────────────────────────────────────────────────────
+function reassemble() {
+  const N = totalFrames;
+  if (N === null) return;
+
+  // Concatenate payloads in order
+  const parts = [];
+  for (let i = 0; i < N; i++) {
+    if (!received[i]) return; // missing frame
+    parts.push(received[i]);
+  }
+
+  // Concatenate
+  let totalLen = 0;
+  for (const p of parts) totalLen += p.length;
+  const merged = new Uint8Array(totalLen);
+  let off = 0;
+  for (const p of parts) {
+    merged.set(p, off);
+    off += p.length;
+  }
+
+  // Parse session header
+  // byte 0: magic (0xAB), byte 1: version (0x01)
+  if (merged[0] !== 0xAB || merged[1] !== 0x01) {
+    status.textContent = "Bad session header — wrong magic";
+    return null;
+  }
+  const nameLen = (merged[2] << 8) | merged[3];
+  const nameBytes = merged.slice(4, 4 + nameLen);
+  const filename = new TextDecoder().decode(nameBytes);
+
+  // Decompress the rest with pako
+  const compressed = merged.slice(4 + nameLen);
+  let raw;
+  try {
+    raw = pako.inflate(compressed);
+  } catch (e) {
+    status.textContent = "Decompress error: " + e.message;
+    return null;
+  }
+
+  return { filename, data: raw };
+}
+
+function triggerDownload(file) {
+  const blob = new Blob([file.data], { type: "application/octet-stream" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = file.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  status.textContent = `Downloaded: ${file.filename} (${file.data.length} bytes)`;
+}
+
+// ── main loop ────────────────────────────────────────────────────────────
+let lastScan = 0;
+
+function loop(ts) {
+  if (!running) return;
+  animId = requestAnimationFrame(loop);
+
+  if (ts - lastScan < CFG.SCAN_EVERY) return;
+  lastScan = ts;
+
+  // Resize processing canvas to match video
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  overlay.width  = vw;
+  overlay.height = vh;
+
+  // Draw video frame to canvas
+  octx.drawImage(video, 0, 0, vw, vh);
+  const imgData = octx.getImageData(0, 0, vw, vh);
+  const pixels  = imgData.data;
+
+  const result = decodeFrame(pixels, vw, vh);
+
+  // Draw overlay
+  octx.strokeStyle = result ? "#0f0" : "#f44";
+  octx.lineWidth = 3;
+  const corners = findGridCorners(pixels, vw, vh);
+  if (corners) {
+    octx.strokeRect(corners.left, corners.top,
+                     corners.right - corners.left, corners.bottom - corners.top);
+  }
+
+  if (!result) return;
+
+  const { index, total, payload } = result;
+
+  // Init or validate total
+  if (totalFrames === null) {
+    totalFrames = total;
+    status.textContent = `Detected: ${total} frame(s)`;
+  } else if (totalFrames !== total) {
+    // total mismatch — maybe a different transfer, ignore
+    return;
+  }
+
+  // Cooldown check
+  const now = Date.now();
+  if (lastCapture[index] && now - lastCapture[index] < CFG.COOLDOWN) return;
+  lastCapture[index] = now;
+
+  // Store
+  received[index] = payload;
+
+  // Update progress
+  const got = Object.keys(received).length;
+  const pct = Math.round((got / totalFrames) * 100);
+  bar.style.width = pct + "%";
+  frames.textContent = `${got} / ${totalFrames}`;
+  sz.textContent = `${Math.round(Object.values(received).reduce((a,b)=>a+b.length,0)/1024)} KB`;
+  status.textContent = `Captured frame ${index + 1} of ${totalFrames}`;
+
+  if (got >= totalFrames) {
+    status.textContent = "All frames captured — reassembling…";
+    running = false;
+    cancelAnimationFrame(animId);
+    if (stream) { stream.getTracks().forEach(t => t.stop()); }
+
+    const file = reassemble();
+    if (file) {
+      dlBtn.disabled = false;
+      dlBtn.textContent = `Download ${file.filename} (${file.data.length} bytes)`;
+      dlBtn.onclick = () => triggerDownload(file);
+      status.textContent = "Ready! Tap Download.";
+      // Vibrate to notify
+      if (navigator.vibrate) navigator.vibrate([200,100,200]);
+    }
+  }
+}
+
+// ── start ────────────────────────────────────────────────────────────────
+dlBtn.onclick = () => {
+  const file = reassemble();
+  if (file) triggerDownload(file);
+};
+
+startCamera();
+</script>
+</body>
+</html>
