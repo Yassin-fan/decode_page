@@ -57,14 +57,42 @@ async function enumCams(){
 
 async function startCam(deviceId){
   if(stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  let constraints = { video: { facingMode: 'environment' }, audio: false };
-  if(deviceId) constraints.video = { deviceId: { exact: deviceId } };
+  
+  // ================= 核心升级：勒索超清画质 =================
+  let videoConstraints = {
+    facingMode: 'environment',
+    // 强制请求 1080P 画质（手机会自动匹配最接近的高清方案）
+    width: { ideal: 1920, min: 1280 },
+    height: { ideal: 1080, min: 720 },
+    // 尝试唤醒底层硬件的“连续自动对焦”特性（部分安卓 Chrome 极度有效）
+    advanced: [{ focusMode: "continuous" }]
+  };
+
+  if(deviceId) videoConstraints.deviceId = { exact: deviceId };
+
   try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = stream; await video.play();
-    status.textContent = 'Scanning... (CRC Engine ON)';
+    // 第一次尝试：强开 1080P 与高级对焦
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+    video.srcObject = stream; 
+    await video.play();
+    status.textContent = 'Scanning... (HD Mode ON)';
     live = true; requestAnimationFrame(loop);
-  } catch(e) { status.textContent = 'Camera err: ' + e.message; }
+  } catch(e) {
+    // 降级方案：如果手机因为不支持上述参数报错，则退回到最基础的安全模式
+    console.warn("HD mode rejected, falling back to standard constraints...", e);
+    try {
+        let safeConstraints = { facingMode: 'environment' };
+        if(deviceId) safeConstraints.deviceId = { exact: deviceId };
+        
+        stream = await navigator.mediaDevices.getUserMedia({ video: safeConstraints, audio: false });
+        video.srcObject = stream; 
+        await video.play();
+        status.textContent = 'Scanning... (Standard Mode)';
+        live = true; requestAnimationFrame(loop);
+    } catch(e2) {
+        status.textContent = 'Camera err: ' + e2.message; 
+    }
+  }
 }
 
 camSel.onchange = function() { curDev = camSel.value; startCam(curDev); };
